@@ -1,0 +1,339 @@
+From a7b42872614b287aef78e7570fda577f963983a7 Mon Sep 17 00:00:00 2001
+From: kuairand-agent <agent@kuairand.local>
+Date: Mon, 31 Aug 2026 01:56:57 +0800
+Subject: [PATCH] =?UTF-8?q?model:=20Since=20no=20working=20pipeline=20exis?=
+ =?UTF-8?q?ts=20yet,=20first=20implement=20the=20FM=20baseline=20i?=
+ =?UTF-8?q?=E2=80=A6=20[38bddbc4]?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ main.py | 310 +++++++++++++++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 286 insertions(+), 24 deletions(-)
+
+diff --git a/main.py b/main.py
+index de7c78a..97d8167 100644
+--- a/main.py
++++ b/main.py
+@@ -76,32 +76,294 @@ def write_predictions(out_dir: str, target: pd.DataFrame, scores: np.ndarray) ->
+ 
+ 
+ # ------------------------------- AGENT-OWNED ZONE -----------------------------------
+-# Everything below is what the agent rewrites. The seed implementation deliberately
+-# contains no ML: it scores every row 0.0, which is a valid-but-worthless submission.
+-# Milestone 0 (harness proof) runs exactly this.
++import numpy as np
++import pandas as pd
++import os
++
++
++# ---------------------------------------------------------------------------
++# FM baseline: user_id x video_id (+ 3 more CWM-style fields) via a proper
++# factorization machine trained with mini-batch Adam on logloss, early
++# stopped on the primary validation metric (mean of GAUC and nDCG@5).
++# ---------------------------------------------------------------------------
++
++FIELDS = ["user_id", "video_id", "tab", "duration_bucket", "hourmin_bucket"]
++K = 16
++LR = 0.001
++BATCH = 8192
++MAX_EPOCHS = 40
++PATIENCE = 4
++N_BINS = 20
++SEED = 0
++
++
++def _sigmoid(z):
++    return 1.0 / (1.0 + np.exp(-np.clip(z, -30, 30)))
++
++
++def _build_categorical(train_col):
++    uniq, train_idx = np.unique(train_col.astype(str), return_inverse=True)
++    mapping = {v: i + 1 for i, v in enumerate(uniq)}  # 0 = OOV
++    return mapping, train_idx + 1, len(uniq) + 1
++
++
++def _apply_categorical(mapping, col):
++    s = pd.Series(col.astype(str))
++    return s.map(mapping).fillna(0).astype(int).values
++
++
++def _build_numeric_bins(train_col):
++    edges = np.unique(np.quantile(train_col.astype(float), np.linspace(0, 1, N_BINS + 1)))
++    if len(edges) < 3:
++        edges = np.array([train_col.min() - 1, train_col.max() + 1])
++    inner = edges[1:-1]
++    train_idx = np.digitize(train_col.astype(float), inner) + 1
++    vocab = len(inner) + 2
++    return inner, train_idx, vocab
++
++
++def _apply_numeric_bins(inner, col):
++    return np.digitize(col.astype(float), inner) + 1
++
++
++def _encode_all(train, valid, target):
++    encoders = {}
++    idxs = {"train": {}, "valid": {}, "target": {}}
++    vocabs = {}
++
++    for f in ["user_id", "video_id", "tab"]:
++        mapping, tr_idx, vocab = _build_categorical(train[f].values)
++        encoders[f] = ("cat", mapping)
++        idxs["train"][f] = tr_idx
++        idxs["valid"][f] = _apply_categorical(mapping, valid[f].values)
++        idxs["target"][f] = _apply_categorical(mapping, target[f].values)
++        vocabs[f] = vocab
++
++    # duration bucket
++    inner, tr_idx, vocab = _build_numeric_bins(train["duration_ms"].values)
++    encoders["duration_bucket"] = ("num", inner)
++    idxs["train"]["duration_bucket"] = tr_idx
++    idxs["valid"]["duration_bucket"] = _apply_numeric_bins(inner, valid["duration_ms"].values)
++    idxs["target"]["duration_bucket"] = _apply_numeric_bins(inner, target["duration_ms"].values)
++    vocabs["duration_bucket"] = vocab
++
++    # hourmin -> hour bucket (categorical, small cardinality)
++    def hour_of(col):
++        return (col.astype(float) // 100).astype(int)
++
++    hour_train = hour_of(train["hourmin"].values)
++    mapping, tr_idx, vocab = _build_categorical(hour_train)
++    encoders["hourmin_bucket"] = ("cat", mapping)
++    idxs["train"]["hourmin_bucket"] = tr_idx
++    idxs["valid"]["hourmin_bucket"] = _apply_categorical(mapping, hour_of(valid["hourmin"].values))
++    idxs["target"]["hourmin_bucket"] = _apply_categorical(mapping, hour_of(target["hourmin"].values))
++    vocabs["hourmin_bucket"] = vocab
++
++    return idxs, vocabs
++
++
++def _gauc(user_ids, y_true, y_score):
++    df = pd.DataFrame({"u": user_ids, "y": y_true, "s": y_score})
++    total_w = 0.0
++    total = 0.0
++    for _, g in df.groupby("u", sort=False):
++        n = len(g)
++        n_pos = g["y"].sum()
++        n_neg = n - n_pos
++        if n_pos == 0 or n_neg == 0:
++            continue
++        ranks = g["s"].rank(method="average").values
++        pos_rank_sum = ranks[g["y"].values == 1].sum()
++        auc = (pos_rank_sum - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg)
++        total += auc * n
++        total_w += n
++    return total / total_w if total_w > 0 else 0.5
++
++
++def _ndcg5(user_ids, y_true, y_score):
++    df = pd.DataFrame({"u": user_ids, "y": y_true, "s": y_score})
++    vals = []
++    for _, g in df.groupby("u", sort=False):
++        if g["y"].sum() == 0:
++            continue
++        g_sorted = g.sort_values("s", ascending=False).head(5)
++        rel = g_sorted["y"].values.astype(float)
++        discounts = 1.0 / np.log2(np.arange(2, len(rel) + 2))
++        dcg = np.sum(rel * discounts)
++        ideal_rel = np.sort(g["y"].values.astype(float))[::-1][:5]
++        idiscounts = 1.0 / np.log2(np.arange(2, len(ideal_rel) + 2))
++        idcg = np.sum(ideal_rel * idiscounts)
++        vals.append(dcg / idcg if idcg > 0 else 0.0)
++    return float(np.mean(vals)) if vals else 0.0
++
++
++def _primary(user_ids, y_true, y_score):
++    g = _gauc(user_ids, y_true, y_score)
++    n = _ndcg5(user_ids, y_true, y_score)
++    return (g + n) / 2.0, g, n
++
++
++class FM:
++    def __init__(self, vocabs, k=K, seed=SEED):
++        rng = np.random.RandomState(seed)
++        self.fields = FIELDS
++        self.k = k
++        self.bias = np.zeros(1)
++        self.W = {f: np.zeros(vocabs[f]) for f in self.fields}
++        self.V = {f: rng.normal(0, 0.01, size=(vocabs[f], k)) for f in self.fields}
++
++        self.m_bias = np.zeros(1); self.v_bias = np.zeros(1)
++        self.m_W = {f: np.zeros(vocabs[f]) for f in self.fields}
++        self.v_W = {f: np.zeros(vocabs[f]) for f in self.fields}
++        self.m_V = {f: np.zeros((vocabs[f], k)) for f in self.fields}
++        self.v_V = {f: np.zeros((vocabs[f], k)) for f in self.fields}
++        self.t = 0
++
++    def forward(self, idx_batch):
++        S = np.zeros((len(next(iter(idx_batch.values()))), self.k))
++        sq = np.zeros_like(S)
++        linear = np.zeros(S.shape[0]) + self.bias[0]
++        embs = {}
++        for f in self.fields:
++            idx = idx_batch[f]
++            e = self.V[f][idx]
++            embs[f] = e
++            S += e
++            sq += e * e
++            linear += self.W[f][idx]
++        interaction = 0.5 * np.sum(S * S - sq, axis=1)
++        z = linear + interaction
++        return z, S, embs
++
++    def _adam(self, param, m, v, idx, grad, reg=1e-6):
++        self.t_local = self.t
++        grad = grad + reg * param[idx]
++        m[idx] = 0.9 * m[idx] + 0.1 * grad
++        v[idx] = 0.999 * v[idx] + 0.001 * (grad ** 2)
++        mhat = m[idx] / (1 - 0.9 ** self.t)
++        vhat = v[idx] / (1 - 0.999 ** self.t)
++        param[idx] -= LR * mhat / (np.sqrt(vhat) + 1e-8)
++
++    def train_batch(self, idx_batch, y):
++        self.t += 1
++        z, S, embs = self.forward(idx_batch)
++        p = _sigmoid(z)
++        g = (p - y) / len(y)
++
++        # bias
++        gb = np.array([g.sum()])
++        self.m_bias[:] = 0.9 * self.m_bias + 0.1 * gb
++        self.v_bias[:] = 0.999 * self.v_bias + 0.001 * (gb ** 2)
++        mhat = self.m_bias / (1 - 0.9 ** self.t)
++        vhat = self.v_bias / (1 - 0.999 ** self.t)
++        self.bias -= LR * mhat / (np.sqrt(vhat) + 1e-8)
++
++        for f in self.fields:
++            idx = idx_batch[f]
++            uniq, inv = np.unique(idx, return_inverse=True)
++            grad_w = np.zeros(len(uniq))
++            np.add.at(grad_w, inv, g)
++            self._adam(self.W[f], self.m_W[f], self.v_W[f], uniq, grad_w)
++
++            contrib = g[:, None] * (S - embs[f])
++            grad_v = np.zeros((len(uniq), self.k))
++            np.add.at(grad_v, inv, contrib)
++            self._adam_emb(self.V[f], self.m_V[f], self.v_V[f], uniq, grad_v)
++
++        # logloss for diagnostics
++        eps = 1e-7
++        loss = -np.mean(y * np.log(p + eps) + (1 - y) * np.log(1 - p + eps))
++        return loss
++
++    def _adam_emb(self, param, m, v, idx, grad, reg=1e-6):
++        grad = grad + reg * param[idx]
++        m[idx] = 0.9 * m[idx] + 0.1 * grad
++        v[idx] = 0.999 * v[idx] + 0.001 * (grad ** 2)
++        mhat = m[idx] / (1 - 0.9 ** self.t)
++        vhat = v[idx] / (1 - 0.999 ** self.t)
++        param[idx] -= LR * mhat / (np.sqrt(vhat) + 1e-8)
++
++    def predict(self, idx_batch):
++        z, _, _ = self.forward(idx_batch)
++        return _sigmoid(z)
++
++    def snapshot(self):
++        return {
++            "bias": self.bias.copy(),
++            "W": {f: self.W[f].copy() for f in self.fields},
++            "V": {f: self.V[f].copy() for f in self.fields},
++        }
++
++    def restore(self, snap):
++        self.bias = snap["bias"].copy()
++        self.W = {f: snap["W"][f].copy() for f in self.fields}
++        self.V = {f: snap["V"][f].copy() for f in self.fields}
++
+ 
+ def fit_predict(train: pd.DataFrame, valid: pd.DataFrame, target: pd.DataFrame,
+-                checkpoint_dir: str) -> np.ndarray:
+-    """Fit on `train`, return one score per row of `target` (canonical order).
+-
+-    Args:
+-        train: the training split (20220408-0421), all raw log columns.
+-        valid: the validation split (20220422-0428). **Use this for early stopping and
+-            model selection** — the official FM baseline evaluates on it every epoch and
+-            stops after 4 rounds without improvement. Never early-stop on `target`.
+-        target: the split to score; return exactly len(target) scores.
+-        checkpoint_dir: write anything needed to reproduce inference here.
+-
+-    Note during development `target` IS `valid` (same rows) — that is the organisers'
+-    own methodology, matching how the published baseline is tuned. At final evaluation
+-    `target` becomes the held-out test split while `valid` stays the validation split,
+-    so code that selects on `valid` transfers correctly and code that peeks at `target`'s
+-    labels does not.
+-
+-    Returns:
+-        np.ndarray of shape (len(target),), finite floats, relative order only.
+-    """
+-    return np.zeros(len(target), dtype=float)
++                 checkpoint_dir: str) -> np.ndarray:
++    idxs, vocabs = _encode_all(train, valid, target)
++    y_train = train["long_view"].values.astype(float)
++    y_valid = valid["long_view"].values.astype(float)
++    n = len(train)
++
++    model = FM(vocabs)
++    rng = np.random.RandomState(SEED)
++
++    best_primary = -1.0
++    best_epoch = -1
++    best_snap = None
++    patience_left = PATIENCE
++
++    print(f"[FM] fields={FIELDS} vocabs={vocabs} rows_train={n} rows_valid={len(valid)}")
++
++    for epoch in range(1, MAX_EPOCHS + 1):
++        order = rng.permutation(n)
++        losses = []
++        for start in range(0, n, BATCH):
++            sel = order[start:start + BATCH]
++            idx_batch = {f: idxs["train"][f][sel] for f in FIELDS}
++            y_batch = y_train[sel]
++            loss = model.train_batch(idx_batch, y_batch)
++            losses.append(loss)
++
++        val_idx_batch = {f: idxs["valid"][f] for f in FIELDS}
++        val_scores = model.predict(val_idx_batch)
++        primary, gauc, ndcg = _primary(valid["user_id"].values, y_valid, val_scores)
++        train_loss = float(np.mean(losses))
++
++        print(f"[FM] epoch={epoch:02d} train_logloss={train_loss:.5f} "
++              f"valid_GAUC={gauc:.4f} valid_nDCG5={ndcg:.4f} valid_primary={primary:.4f}")
++
++        if primary > best_primary + 1e-5:
++            best_primary = primary
++            best_epoch = epoch
++            best_snap = model.snapshot()
++            patience_left = PATIENCE
++        else:
++            patience_left -= 1
++            if patience_left <= 0:
++                print(f"[FM] early stop at epoch={epoch}, best_epoch={best_epoch} "
++                      f"best_valid_primary={best_primary:.4f}")
++                break
++    else:
++        print(f"[FM] reached max_epochs={MAX_EPOCHS}, best_epoch={best_epoch} "
++              f"best_valid_primary={best_primary:.4f}")
++
++    if best_snap is not None:
++        model.restore(best_snap)
++
++    os.makedirs(checkpoint_dir, exist_ok=True)
++    np.savez(os.path.join(checkpoint_dir, "fm_model.npz"),
++              bias=model.bias,
++              **{f"W_{f}": model.W[f] for f in FIELDS},
++              **{f"V_{f}": model.V[f] for f in FIELDS})
++
++    target_idx_batch = {f: idxs["target"][f] for f in FIELDS}
++    scores = model.predict(target_idx_batch)
++    scores = np.asarray(scores, dtype=float)
++    scores[~np.isfinite(scores)] = 0.0
++    return scores
+ 
+ 
+ # --------------------------- END AGENT-OWNED ZONE -----------------------------------
+-- 
+2.39.5 (Apple Git-154)
