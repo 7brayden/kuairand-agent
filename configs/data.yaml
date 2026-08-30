@@ -1,0 +1,43 @@
+# Dataset configuration for KuaiRand-Pure.
+# All values below come from the organisers' starter kit (eval/official/) and are FIXED.
+# Hard rule: KuaiRand only — no external training data, no pretrained weights.
+
+dataset: kuairand-pure
+label: long_view          # organiser-fixed relevance label (native 0/1 column).
+                          # The other signals (is_click/is_like/is_follow/is_comment/
+                          # is_forward/play_time_ms) are usable as FEATURES or auxiliary
+                          # tasks only — never as the target.
+
+task: within_user_ranking # Each user is ranked ONLY over their own impressions in the eval
+                          # split. No full-catalogue retrieval.
+                          # Consequence: anything constant within a user cannot change the
+                          # score — pure user-side first-order terms contribute exactly 0.
+
+splits:                   # official boundaries, inclusive, on the `date` column
+  train: {start: 20220408, end: 20220421}
+  valid: {start: 20220422, end: 20220428}
+  test:  {start: 20220429, end: 20220508}
+
+metrics: [GAUC, "nDCG@5"]
+primary: mean(GAUC, nDCG@5)
+
+paths:
+  raw: data/raw/KuaiRand-Pure/data   # gitignored; populated by data/download.sh
+  cache: data/processed              # gitignored; npz/parquet caches of the parsed logs
+
+files:
+  train_log: log_standard_4_08_to_4_21_pure.csv
+  eval_log: log_standard_4_22_to_5_08_pure.csv   # contains BOTH valid and test windows
+  random_log: log_random_4_22_to_5_08_pure.csv   # unbiased random-exposure log (1.18M rows),
+                                                 # usable as a bias check — NOT training data
+                                                 # for the primary label by default
+  user_features: user_features_pure.csv
+  video_features: video_features_basic_pure.csv
+  video_stats: video_features_statistic_pure.csv
+
+integrity:
+  # The test split's labels are present locally (public dataset). "Hidden test" is an
+  # honour-system constraint the harness enforces. See CLAUDE.md > Test-set integrity.
+  loop_may_score: [valid]
+  test_scored_once_by: scripts/final_eval.py
+  lint_generated_code_for_test_access: true

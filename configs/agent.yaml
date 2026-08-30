@@ -1,0 +1,67 @@
+# Agent/harness configuration.
+# The convergence rule and baseline scores below are ORGANISER-FIXED (published in
+# eval/official/baseline_scores.json). Do not tune them — they define the task.
+
+convergence:
+  epsilon: 0.002     # organiser-fixed. FM's seed std is 0.0008, so eps ~= 2.5 sigma:
+                     # any gain under 0.002 is noise, not progress.
+  patience: 3        # organiser-fixed "N": 3 consecutive iterations without a >eps gain
+                     # in VALIDATION primary => converged.
+
+budget:
+  # Not organiser-specified. These are OUR self-imposed ceilings (Feasibility is 15% of the
+  # score: total tokens + GPU-hours). Tuned to keep a full run cheap; raise deliberately.
+  max_tokens: 2000000
+  max_gpu_hours: 0.0        # 0.0 = CPU-only run; LightGBM lambdarank is the default model.
+                            # Raise ONLY for a justified torch escalation.
+  max_wall_hours: 8.0
+
+baseline:
+  # Published FM baseline — the thing to beat. Primary metric is the ABSOLUTE delta over the
+  # test row. Selection during the run uses valid.
+  source: eval/official/baseline_scores.json
+  valid: {GAUC: 0.6674, "nDCG@5": 0.5357, primary: 0.6016}
+  test:  {GAUC: 0.6610, "nDCG@5": 0.5282, primary: 0.5946}
+  seed_std: 0.0008
+  oracle_ceiling:   # report progress against this, not against 1.0
+    valid: {primary: 0.8484}
+    test:  {primary: 0.8645}
+
+llm:
+  # Provider swappable behind agent/llm.py, the single call site.
+  model: claude-sonnet-5    # ~60% cheaper than claude-opus-5 ($2/$10 vs $5/$25 per MTok).
+                            # Same API surface: adaptive thinking (pass NO `thinking` block)
+                            # and NEVER temperature/top_p/top_k — sampling params are removed
+                            # on both models and return HTTP 400.
+                            # Swap back to claude-opus-5 if hypothesis quality disappoints;
+                            # that reasoning is the 20% Innovation score.
+  max_output_tokens: 16000  # NOT a lowball: adaptive thinking spends OUTPUT tokens, so
+                            # 8192 truncated generated code mid-block. 16000 is the
+                            # recommended non-streaming default (stays under HTTP timeouts).
+  max_retries: 3
+  effort: high              # DEFAULT effort; each call site overrides it:
+                            #   policy  -> high    (hypothesis quality IS Innovation, 20%)
+                            #   codegen -> medium  (mechanical once the hypothesis is fixed)
+                            # low|medium|high|xhigh|max. Thinking tokens count toward the
+                            # scored token total, so this is the 20%-vs-15% knob.
+
+policy:
+  kind: llm                 # "llm" = the real agent (needs ANTHROPIC_API_KEY);
+                            # "random" = milestone-0 harness proof, no provider needed.
+                            # Override either way with `--policy` on the command line.
+  seed: 0
+  actions: [eda, feature, model, tune, debug]
+
+executor:
+  timeout_seconds: 1800     # hard subprocess timeout for generated pipeline code
+  python: null              # null = use the same interpreter as the harness (sys.executable).
+                            # Set explicitly only to run the pipeline in a different env;
+                            # a bare "python3" here silently diverges from `uv run`.
+
+paths:
+  journal: logs/journal.jsonl
+  diffs: logs/diffs
+  prompts: agent/prompts
+  workspace: pipeline/workspace
+  template: pipeline/template
+  checkpoints: checkpoints

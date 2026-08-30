@@ -1,0 +1,26 @@
+# secrets — the repo is a public deliverable, so never let a key in
+.env
+.envrc
+*.key
+
+# environments / caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# the agent's workspace is its OWN git repo (commit graph = search tree);
+# it must never be tracked by the outer repo
+pipeline/workspace/
+
+# data and model artifacts (large; reproducible via data/download.sh + journal)
+data/raw/
+data/processed/
+checkpoints/
+logs/_work/
+
+# archived previous runs (the live run's journal stays tracked)
+runs/
+
+# NOTE: logs/ (journal + diffs) and reports/ are deliverables — they stay tracked.

@@ -1,0 +1,239 @@
+From 93b2eb72ec915a2c9148ad57eb11169c4324c9f3 Mon Sep 17 00:00:00 2001
+From: kuairand-agent <agent@kuairand.local>
+Date: Sun, 30 Aug 2026 14:50:52 +0800
+Subject: [PATCH] =?UTF-8?q?model:=20Replacing=20the=20null=20scorer=20with?=
+ =?UTF-8?q?=20a=20LightGBM=20lambdarank=20model=20(group=20=3D=20use?=
+ =?UTF-8?q?=E2=80=A6=20[d0df631a]?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ main.py | 208 ++++++++++++++++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 196 insertions(+), 12 deletions(-)
+
+diff --git a/main.py b/main.py
+index 6ce5e0c..d138de6 100644
+--- a/main.py
++++ b/main.py
+@@ -76,22 +76,206 @@ def write_predictions(out_dir: str, target: pd.DataFrame, scores: np.ndarray) ->
+ 
+ 
+ # ------------------------------- AGENT-OWNED ZONE -----------------------------------
+-# Everything below is what the agent rewrites. The seed implementation deliberately
+-# contains no ML: it scores every row 0.0, which is a valid-but-worthless submission.
+-# Milestone 0 (harness proof) runs exactly this.
++import numpy as np
++import pandas as pd
++
+ 
+ def fit_predict(train: pd.DataFrame, target: pd.DataFrame, checkpoint_dir: str) -> np.ndarray:
+-    """Fit on `train`, return one score per row of `target` (canonical order).
++    """Fit on `train`, return one score per row of `target` (canonical order)."""
++    import os
++    import lightgbm as lgb
+ 
+-    Args:
+-        train: the training split with all raw log columns.
+-        target: the split to score; return exactly len(target) scores.
+-        checkpoint_dir: write anything needed to reproduce inference here.
++    rng = np.random.RandomState(42)
+ 
+-    Returns:
+-        np.ndarray of shape (len(target),), finite floats, relative order only.
+-    """
+-    return np.zeros(len(target), dtype=float)
++    tr = train.copy()
++    tg = target.copy()
++
++    # ---------- basic derived columns ----------
++    def derive(df):
++        out = pd.DataFrame(index=df.index)
++        if "duration_ms" in df.columns:
++            dur = pd.to_numeric(df["duration_ms"], errors="coerce").astype(float)
++        else:
++            dur = pd.Series(np.nan, index=df.index, dtype=float)
++        out["duration_ms"] = dur
++        out["log_duration"] = np.log1p(dur.clip(lower=0).fillna(0.0))
++        if "hourmin" in df.columns:
++            hm = pd.to_numeric(df["hourmin"], errors="coerce").fillna(0).astype(int)
++            out["hour"] = (hm // 100).clip(0, 23).astype(int)
++            out["minute"] = (hm % 100).clip(0, 59).astype(int)
++        else:
++            out["hour"] = 0
++            out["minute"] = 0
++        if "tab" in df.columns:
++            out["tab"] = pd.to_numeric(df["tab"], errors="coerce").fillna(-1).astype(int)
++        else:
++            out["tab"] = -1
++        if "date" in df.columns:
++            d = pd.to_numeric(df["date"], errors="coerce")
++            out["date_num"] = d.fillna(d.min() if d.notna().any() else 0).astype(float)
++        else:
++            out["date_num"] = 0.0
++        return out
++
++    tr_d = derive(tr)
++    tg_d = derive(tg)
++
++    # day index relative to train min date (monotone, ok for drift)
++    base_date = tr_d["date_num"].min()
++    tr_d["day_idx"] = tr_d["date_num"] - base_date
++    tg_d["day_idx"] = tg_d["date_num"] - base_date
++
++    y = pd.to_numeric(tr["long_view"], errors="coerce").fillna(0).astype(int).values
++
++    # ---------- item-side target encodings (smoothed, computed on train) ----------
++    vid_tr = tr["video_id"].values
++    vid_tg = tg["video_id"].values
++
++    enc_specs = []
++    enc_specs.append(("lv", y.astype(float)))
++    if "is_click" in tr.columns:
++        enc_specs.append(("clk", pd.to_numeric(tr["is_click"], errors="coerce").fillna(0).astype(float).values))
++    if "is_like" in tr.columns:
++        enc_specs.append(("like", pd.to_numeric(tr["is_like"], errors="coerce").fillna(0).astype(float).values))
++    if "play_time_ms" in tr.columns:
++        pt = pd.to_numeric(tr["play_time_ms"], errors="coerce").fillna(0.0).astype(float).values
++        enc_specs.append(("pt", np.log1p(np.clip(pt, 0, None))))
++        dur_tr = tr_d["duration_ms"].values
++        with np.errstate(divide="ignore", invalid="ignore"):
++            ratio = np.where(dur_tr > 0, pt / dur_tr, np.nan)
++        ratio = np.clip(np.nan_to_num(ratio, nan=0.0), 0.0, 5.0)
++        enc_specs.append(("pr", ratio))
++
++    vid_series = pd.Series(vid_tr)
++    counts = vid_series.value_counts()
++
++    # out-of-fold encoding for train to limit leakage
++    n_tr = len(tr)
++    n_folds = 5
++    fold = rng.randint(0, n_folds, size=n_tr)
++
++    smoothing = 20.0
++    enc_cols_tr = {}
++    enc_cols_tg = {}
++
++    for name, vals in enc_specs:
++        vals = np.asarray(vals, dtype=float)
++        global_mean = float(np.nanmean(vals)) if np.isfinite(vals).any() else 0.0
++
++        # full-data encoding for target
++        grp = pd.DataFrame({"v": vid_tr, "x": vals}).groupby("v")["x"]
++        s = grp.sum()
++        c = grp.count()
++        full_enc = (s + smoothing * global_mean) / (c + smoothing)
++        enc_cols_tg["te_" + name] = pd.Series(vid_tg).map(full_enc).fillna(global_mean).values
++
++        # OOF encoding for train
++        oof = np.full(n_tr, global_mean, dtype=float)
++        for f in range(n_folds):
++            mask_in = fold != f
++            mask_out = ~mask_in
++            if mask_out.sum() == 0:
++                continue
++            g = pd.DataFrame({"v": vid_tr[mask_in], "x": vals[mask_in]}).groupby("v")["x"]
++            ss = g.sum()
++            cc = g.count()
++            e = (ss + smoothing * global_mean) / (cc + smoothing)
++            oof[mask_out] = pd.Series(vid_tr[mask_out]).map(e).fillna(global_mean).values
++        enc_cols_tr["te_" + name] = oof
++
++    # item impression count (popularity)
++    cnt_map = counts.astype(float)
++    enc_cols_tr["item_cnt"] = np.log1p(pd.Series(vid_tr).map(cnt_map).fillna(0.0).values)
++    enc_cols_tg["item_cnt"] = np.log1p(pd.Series(vid_tg).map(cnt_map).fillna(0.0).values)
++
++    # ---------- assemble feature frames ----------
++    base_feats = ["log_duration", "duration_ms", "hour", "minute", "tab", "day_idx"]
++
++    X_tr = tr_d[base_feats].reset_index(drop=True)
++    X_tg = tg_d[base_feats].reset_index(drop=True)
++    for k, v in enc_cols_tr.items():
++        X_tr[k] = v
++    for k, v in enc_cols_tg.items():
++        X_tg[k] = v
++
++    # duration relative to user's typical duration (within-user varying signal)
++    user_tr = tr["user_id"].values
++    user_tg = tg["user_id"].values
++    user_dur_mean = pd.DataFrame({"u": user_tr, "d": tr_d["log_duration"].values}).groupby("u")["d"].mean()
++    X_tr["dur_vs_user"] = X_tr["log_duration"].values - pd.Series(user_tr).map(user_dur_mean).fillna(
++        X_tr["log_duration"].mean()).values
++    X_tg["dur_vs_user"] = X_tg["log_duration"].values - pd.Series(user_tg).map(user_dur_mean).fillna(
++        X_tr["log_duration"].mean()).values
++
++    feat_names = list(X_tr.columns)
++    X_tg = X_tg[feat_names]
++
++    X_tr = X_tr.astype(float).replace([np.inf, -np.inf], np.nan)
++    X_tg = X_tg.astype(float).replace([np.inf, -np.inf], np.nan)
++
++    # ---------- sort TRAIN by user for grouping (never target) ----------
++    order = np.argsort(user_tr, kind="mergesort")
++    X_tr_sorted = X_tr.iloc[order].reset_index(drop=True)
++    y_sorted = y[order]
++    users_sorted = pd.Series(user_tr[order])
++    group_sizes = users_sorted.groupby(users_sorted, sort=False).size().values
++
++    cat_idx = [feat_names.index("tab")] if "tab" in feat_names else []
++
++    ranker = lgb.LGBMRanker(
++        objective="lambdarank",
++        n_estimators=400,
++        learning_rate=0.06,
++        num_leaves=63,
++        min_child_samples=50,
++        subsample=0.9,
++        subsample_freq=1,
++        colsample_bytree=0.9,
++        reg_lambda=1.0,
++        label_gain=[0, 1],
++        n_jobs=-1,
++        random_state=42,
++        verbose=-1,
++    )
++
++    try:
++        ranker.fit(
++            X_tr_sorted,
++            y_sorted,
++            group=group_sizes,
++            categorical_feature=cat_idx if cat_idx else "auto",
++        )
++        scores = ranker.predict(X_tg)
++    except Exception:
++        # fallback: plain binary GBDT
++        clf = lgb.LGBMClassifier(
++            n_estimators=300,
++            learning_rate=0.06,
++            num_leaves=63,
++            min_child_samples=50,
++            n_jobs=-1,
++            random_state=42,
++            verbose=-1,
++        )
++        clf.fit(X_tr, y)
++        scores = clf.predict_proba(X_tg)[:, 1]
++
++    scores = np.asarray(scores, dtype=float).reshape(-1)
++    scores = np.nan_to_num(scores, nan=0.0, posinf=0.0, neginf=0.0)
++
++    if len(scores) != len(target):
++        scores = np.zeros(len(target), dtype=float)
++
++    try:
++        os.makedirs(checkpoint_dir, exist_ok=True)
++        with open(os.path.join(checkpoint_dir, "features.txt"), "w") as f:
++            f.write("\n".join(feat_names))
++        if hasattr(ranker, "booster_"):
++            ranker.booster_.save_model(os.path.join(checkpoint_dir, "lambdarank.txt"))
++    except Exception:
++        pass
++
++    return scores
+ 
+ 
+ # --------------------------- END AGENT-OWNED ZONE -----------------------------------
+-- 
+2.39.5 (Apple Git-154)

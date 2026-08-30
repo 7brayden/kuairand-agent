@@ -1,0 +1,23 @@
+<!doctype html>
+<meta charset="utf-8"><title>kuairand-agent run report</title>
+<style>
+ body{font:14px/1.5 -apple-system,system-ui,sans-serif;margin:2rem auto;max-width:1200px;padding:0 1rem}
+ table{border-collapse:collapse;width:100%;font-size:13px}
+ th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;vertical-align:top}
+ th{background:#f4f4f6} tr.acc{background:#eefbf0} tr.rej{background:#fafafa}
+ tr.err{background:#fdf0ee} .hyp{max-width:420px;font-size:12px;color:#333}
+ code{font:12px ui-monospace,Menlo,monospace}
+ .sum{padding:10px 14px;background:#f4f4f6;border-left:4px solid #888;margin:1rem 0}
+</style>
+<h1>kuairand-agent — run report</h1>
+<div class="sum">validation-best <code>d0df631a</code> primary <b>0.5981</b> (baseline 0.6016, delta -0.0035)<br>
+ 4 attempted iterations &middot;
+ 67,850 tokens &middot;
+ 0.0000 GPU-hours &middot;
+ 1 manual interventions</div>
+<p>Generated from <code>logs/journal.jsonl</code>. Every row is one attempted iteration:
+its hypothesis, the metrics it produced, and any failure with the recovery taken.</p>
+<table><thead><tr><th>it</th><th>node</th><th>action</th><th>hypothesis</th>
+<th>GAUC</th><th>nDCG@5</th><th>primary</th><th>acc</th><th>errors &rarr; recovery</th>
+<th>wall</th><th>tokens</th></tr></thead>
+<tbody><tr class='err'><td>0</td><td><code>94d0365d</code></td><td>model</td><td class='hyp'>Replace the null scorer with a LightGBM `lambdarank` model (group = user_id) trained on item-side features only-where-they-vary-within-user: raw item context (duration_ms, tab, hourmin-derived hour, date-derived day index) plus train-computed per-video aggregates (impression count, long_view rate, click rate, mean play_time_ms, mean play_time/duration ratio, all smoothed toward the global mean) and a few user×item crosses (user mean long_view rate × item long_view rate, user mean duration vs item duration difference/ratio). Mechanism: (a) the objective is aligned with the ranking metrics instead of pointwise logloss, and (b) smoothed item popularity/watch-ratio priors are exactly the within-user-varying signal FM has to learn from sparse id embeddings; item popularity alone already scores 0.5807, so a GBDT combining it with duration and watch-ratio priors under a listwise loss should reach roughly 0.63-0.66 primary, i.e. +0.03 or more over the 0.6016 FM baseline (well above the 0.002 noise floor). Falsified if primary lands below 0.6036.</td><td>—</td><td>—</td><td><b>—</b></td><td>✗</td><td><code>bad_llm_output</code> &rarr; revert</td><td>195.9s</td><td>24,285</td></tr><tr class='err'><td>1</td><td><code>dde1d206</code></td><td>model</td><td class='hyp'>Replacing the null scorer with a LightGBM lambdarank model (group = user_id, objective aligned with GAUC/nDCG@5) trained on within-user-varying item features (duration_ms, tab, hour-of-day, day index, plus target-encoded video_id statistics computed on train only) will align the objective with the ranking metrics and lift the primary metric to roughly 0.61-0.63, i.e. +0.01 or more over the 0.6016 FM baseline; if it lands below 0.6036 the ranking-loss lever is falsified for this feature set.</td><td>—</td><td>—</td><td><b>—</b></td><td>✗</td><td><code>bad_llm_output</code> &rarr; revert</td><td>210.7s</td><td>24,024</td></tr><tr class='acc'><td>2</td><td><code>d0df631a</code></td><td>model</td><td class='hyp'>Replacing the null scorer with a LightGBM lambdarank model (group = user_id) trained on within-user-varying features — item context (duration_ms, tab, hour-of-day, day index) plus smoothed item-side target encodings of long_view/is_click/play_time computed on train — will align the objective with GAUC/nDCG@5 and beat the FM baseline of 0.6016 by roughly +0.01 to +0.03 primary.</td><td>0.6626</td><td>0.5335</td><td><b>0.5981</b></td><td>✓</td><td>—</td><td>146.1s</td><td>19,541</td></tr><tr class='rej'><td>3</td><td><code>c5d675b0</code></td><td>intervention</td><td class='hyp'>MANUAL INTERVENTION (not the agent&#x27;s reasoning): installed lightgbm and raised max_output_tokens after the first live iteration truncated</td><td>—</td><td>—</td><td><b>—</b></td><td>✗</td><td>—</td><td>0.0s</td><td>0</td></tr></tbody></table>
