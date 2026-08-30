@@ -259,3 +259,33 @@ def test_usage_is_counted_even_on_a_truncated_call() -> None:
         c.complete("policy_v1", {"task_brief": "", "journal_summary": "",
                                  "resource_summary": "", "current_zone": "", "actions": "model"})
     assert c.take_iteration_usage() == (100, 16000)
+
+
+# --------------------- training-log feedback (the 0.4983 lesson) ----------------------
+
+def test_recent_pipeline_output_is_replayed_to_the_policy() -> None:
+    """Without the training log the agent cannot tell a wrong hypothesis from an
+    undertrained model — in the first live run that cost it two sound ideas."""
+    from agent import memory
+    history = [entry(i, gauc=0.6, ndcg5=0.5) for i in range(5)]
+    for i, e in enumerate(history):
+        e.stdout_tail = f"epoch {i} loss 0.4{i}\nstopped early"
+    text = memory.summarize_journal(history)
+    assert "Pipeline output from recent iterations" in text
+    assert "epoch 4 loss 0.44" in text          # most recent replayed
+    assert "epoch 0 loss 0.40" not in text      # older elided to control tokens
+    assert "undertrained" in text               # the framing the agent needs
+
+
+def test_no_output_section_when_nothing_was_printed() -> None:
+    from agent import memory
+    assert "Pipeline output" not in memory.summarize_journal(
+        [entry(0, gauc=0.6, ndcg5=0.5)])
+
+
+def test_codegen_prompt_demands_training_diagnostics() -> None:
+    client = FakeClient([GOOD_ZONE])
+    LLMCodeGenerator(client).generate(ActionProposal("model", "h"), TEMPLATE, {})
+    prompt = client.prompts_seen[0]
+    assert "Print your training diagnostics" in prompt
+    assert "max_epochs=40" in prompt      # the measured training budget from eval/official/

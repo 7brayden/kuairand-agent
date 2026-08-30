@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 #: Action types the POLICY may choose from. Mirrors agent/actions/.
 POLICY_ACTIONS = ("eda", "feature", "model", "tune", "debug")
@@ -135,6 +135,14 @@ class JournalEntry:
         ``agent/llm.py`` — including failed calls and retries. The journal total
         must equal the provider-side total; ``agent/llm.py`` being the single call
         site is what makes that auditable.
+    stdout_tail:
+        Truncated stdout from the pipeline subprocess (schema v2+). This is the
+        agent's only window into its own training dynamics: loss curves, epoch
+        counts, per-epoch validation, feature shapes. Without it the agent sees
+        one number per iteration and cannot distinguish "my hypothesis was wrong"
+        from "my SGD did not converge" — in the first live run it abandoned two
+        sound ideas (BPR, FM) after undertrained implementations scored badly.
+        Fed back into the reflect step by ``agent/memory.py``.
     error_events:
         Every failure within the iteration and its recovery, in order. Empty list
         for a clean iteration.
@@ -166,6 +174,7 @@ class JournalEntry:
     gpu_seconds: float
     tokens_in: int
     tokens_out: int
+    stdout_tail: Optional[str] = None
     error_events: list[ErrorEvent] = field(default_factory=list)
     accepted: bool = False
     intervention: bool = False
@@ -198,7 +207,11 @@ class JournalEntry:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "JournalEntry":
-        """Inverse of :meth:`to_dict`. Must accept every schema version ever written."""
+        """Inverse of :meth:`to_dict`. Must accept every schema version ever written.
+
+        v1 entries have no ``stdout_tail``; the field defaults to None, so older
+        journals keep loading without migration.
+        """
         d = dict(d)
         d["error_events"] = [ErrorEvent(**e) for e in d.get("error_events", [])]
         return cls(**d)

@@ -112,3 +112,24 @@ def test_intervention_entry_round_trips(tmp_path: Path) -> None:
     append_entry(journal, e)
     (loaded,) = load_journal(journal)
     assert loaded.intervention and loaded.intervention_note == "installed lightgbm by hand"
+
+
+# ------------------------- stdout capture (schema v2) ---------------------------------
+
+def test_stdout_tail_round_trips(tmp_path: Path) -> None:
+    journal = tmp_path / "journal.jsonl"
+    e = make_entry(stdout_tail="epoch 1 loss 0.51\nepoch 2 loss 0.48\nearly stop at 12")
+    append_entry(journal, e)
+    (loaded,) = load_journal(journal)
+    assert "early stop at 12" in loaded.stdout_tail
+
+
+def test_v1_entries_without_stdout_still_load(tmp_path: Path) -> None:
+    """Schema v2 added stdout_tail; v1 journals must keep loading without migration."""
+    journal = tmp_path / "journal.jsonl"
+    d = make_entry().to_dict()
+    del d["stdout_tail"]
+    d["schema_version"] = 1
+    journal.write_text(json.dumps(d) + "\n")
+    (loaded,) = load_journal(journal)
+    assert loaded.stdout_tail is None and loaded.schema_version == 1

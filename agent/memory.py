@@ -28,6 +28,11 @@ FULL_DETAIL_WINDOW = 8
 #: Hypotheses are the agent's own prose and can run long; cap them in the recap.
 HYPOTHESIS_CHARS = 220
 
+#: Iterations whose pipeline stdout is replayed in full. Training logs are the most
+#: useful thing in the journal for diagnosing a bad score, and also the bulkiest, so
+#: only the most recent few are shown — tokens are 15% of the score.
+STDOUT_WINDOW = 3
+
 
 def _clip(text: str, limit: int = HYPOTHESIS_CHARS) -> str:
     text = " ".join((text or "").split())
@@ -72,6 +77,18 @@ def summarize_journal(entries: list[JournalEntry],
             delta = (f"{e.val_primary - best.val_primary:+.4f} vs best"
                      if best else f"{e.val_primary:.4f}")
             lines.append(f"- `{e.action_type}` ({delta}): {_clip(e.hypothesis, 160)}")
+
+    recent_logs = [e for e in entries[-STDOUT_WINDOW:] if e.stdout_tail]
+    if recent_logs:
+        lines += ["", "## Pipeline output from recent iterations", "",
+                  "Use this to tell a wrong *hypothesis* from a broken *implementation*: "
+                  "a model whose loss was still falling when training stopped was "
+                  "undertrained, and its score says nothing about the idea.", ""]
+        for e in recent_logs:
+            lines += [f"### iteration {e.iteration} (`{e.action_type}`, "
+                      f"primary {e.val_primary:.4f})" if e.val_primary is not None
+                      else f"### iteration {e.iteration} (`{e.action_type}`, no score)",
+                      "```", e.stdout_tail.strip(), "```"]
 
     failures = [e for e in entries if e.error_events]
     if failures:

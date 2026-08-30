@@ -52,6 +52,20 @@ noise (FM's std over 5 seeds is 0.0008) and will be rejected by the critic.
 
 Treat these as evidence, not orders.
 
+## What "trained enough" means here
+
+The published FM baseline is not a quick fit: `k=16, lr=0.001, batch=8192,
+max_epochs=40, patience=4` — 40 epochs with early stopping, ~40s on one CPU core for
+1.14M training rows. Any model you write from scratch has to actually converge to be
+worth judging.
+
+A from-scratch SGD/embedding model that runs a handful of epochs will score far below
+its potential for reasons that have **nothing to do with your hypothesis**. If you
+implement FM, BPR, or anything else trained by gradient descent: give it a comparable
+epoch budget, use early stopping on validation, and print the loss curve so the next
+iteration can tell convergence failure from a wrong idea. A score near 0.50 (random is
+0.4834) almost always means the model did not train, not that the idea was bad.
+
 ## Environment
 
 - CPU only. No GPU budget. `numpy`, `pandas`, and `lightgbm` are available; torch is not.

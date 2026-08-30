@@ -84,6 +84,7 @@ def test_accepted_iteration_produces_every_deliverable(tmp_path: Path) -> None:
     assert (tmp_path / entry.diff_path).exists()
     assert (tmp_path / entry.checkpoint_path / "predictions.csv").exists()
     assert "popularity" in entry.hypothesis
+    assert entry.stdout_tail and "rows" in entry.stdout_tail   # pipeline output captured
     assert not run.workspace.is_dirty()
 
 

@@ -40,6 +40,22 @@ from agent.state import Budget, Node, RunState, check_convergence
 from eval import scorer
 
 
+#: Pipeline stdout is fed back into LLM context, so it is capped. Head keeps setup
+#: (row counts, feature shapes), tail keeps the final epochs — the two ends that say
+#: whether training actually converged.
+STDOUT_HEAD, STDOUT_TAIL = 700, 1500
+
+
+def _tail(text: str) -> Optional[str]:
+    """Trim pipeline stdout for the journal, keeping both ends."""
+    text = (text or "").strip()
+    if not text:
+        return None
+    if len(text) <= STDOUT_HEAD + STDOUT_TAIL:
+        return text
+    return f"{text[:STDOUT_HEAD]}\n...[elided]...\n{text[-STDOUT_TAIL:]}"
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -148,6 +164,7 @@ class AgentRun:
         execution: Optional[ExecutionResult] = None
         metrics: Optional[dict] = None
         diff_path: Optional[str] = None
+        stdout_tail: Optional[str] = None
         commit_sha: Optional[str] = None
         checkpoint_path: Optional[str] = None
         config: dict[str, Any] = {}
@@ -214,6 +231,10 @@ class AgentRun:
                      "--split", "valid", "--out-dir", str(out_dir)],
                     cwd=self.workspace.path, timeout_seconds=self.timeout)
 
+                # Captured whether the run succeeded or failed — a crashed run's partial
+                # training log is often the most informative thing in the iteration.
+                stdout_tail = _tail(execution.stdout)
+
                 if execution.timed_out:
                     errors.append(ErrorEvent("timeout",
                                              execution.stderr[-2000:] or "hard timeout",
@@ -264,6 +285,7 @@ class AgentRun:
             diff_path=diff_path, commit_sha=commit_sha, checkpoint_path=checkpoint_path,
             val_gauc=metrics["GAUC"] if metrics else None,
             val_ndcg5=metrics["nDCG@5"] if metrics else None,
+            stdout_tail=stdout_tail,
             wall_seconds=round(time.time() - t0, 2),
             gpu_seconds=0.0,  # CPU-only by default; a torch escalation must measure this
             tokens_in=tokens_in, tokens_out=tokens_out,

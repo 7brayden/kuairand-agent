@@ -34,6 +34,12 @@ unattended, with no human review.
    `load_logs`, `split_of`, or `write_predictions`.
 6. Write anything needed to reproduce inference into `checkpoint_dir`.
 7. Prefer vectorised pandas/numpy. The pipeline must finish well inside the timeout.
+8. **Print your training diagnostics.** stdout is captured into the journal and is the
+   only evidence you will have next iteration about *why* a score came out as it did.
+   If you train anything iteratively, print per-epoch (or per-N-iterations) training loss
+   AND a validation figure, plus the epoch you stopped at and why. Without it, an
+   undertrained model is indistinguishable from a wrong idea, and you will discard a
+   good hypothesis. Keep it to a handful of compact lines.
 
 ## History
 
