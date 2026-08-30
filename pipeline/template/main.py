@@ -80,13 +80,23 @@ def write_predictions(out_dir: str, target: pd.DataFrame, scores: np.ndarray) ->
 # contains no ML: it scores every row 0.0, which is a valid-but-worthless submission.
 # Milestone 0 (harness proof) runs exactly this.
 
-def fit_predict(train: pd.DataFrame, target: pd.DataFrame, checkpoint_dir: str) -> np.ndarray:
+def fit_predict(train: pd.DataFrame, valid: pd.DataFrame, target: pd.DataFrame,
+                checkpoint_dir: str) -> np.ndarray:
     """Fit on `train`, return one score per row of `target` (canonical order).
 
     Args:
-        train: the training split with all raw log columns.
+        train: the training split (20220408-0421), all raw log columns.
+        valid: the validation split (20220422-0428). **Use this for early stopping and
+            model selection** — the official FM baseline evaluates on it every epoch and
+            stops after 4 rounds without improvement. Never early-stop on `target`.
         target: the split to score; return exactly len(target) scores.
         checkpoint_dir: write anything needed to reproduce inference here.
+
+    Note during development `target` IS `valid` (same rows) — that is the organisers'
+    own methodology, matching how the published baseline is tuned. At final evaluation
+    `target` becomes the held-out test split while `valid` stays the validation split,
+    so code that selects on `valid` transfers correctly and code that peeks at `target`'s
+    labels does not.
 
     Returns:
         np.ndarray of shape (len(target),), finite floats, relative order only.
@@ -105,12 +115,14 @@ def main() -> None:
 
     df = load_logs(args.data_dir)
     train = split_of(df, "train")
+    valid = split_of(df, "valid")
     target = split_of(df, args.split)
-    print(f"train={len(train):,d} rows | {args.split}={len(target):,d} rows", flush=True)
+    print(f"train={len(train):,d} | valid={len(valid):,d} | "
+          f"{args.split}(target)={len(target):,d} rows", flush=True)
 
     checkpoint_dir = os.path.join(args.out_dir, "checkpoint")
     os.makedirs(checkpoint_dir, exist_ok=True)
-    scores = fit_predict(train, target, checkpoint_dir)
+    scores = fit_predict(train, valid, target, checkpoint_dir)
 
     path = write_predictions(args.out_dir, target, scores)
     print(f"wrote {path}", flush=True)

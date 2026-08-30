@@ -29,7 +29,7 @@ def test_syntax_error_is_caught_before_execution() -> None:
 
 def test_test_split_access_is_rejected() -> None:
     leak = replace_agent_zone(TEMPLATE, '''
-def fit_predict(train, target, checkpoint_dir):
+def fit_predict(train, valid, target, checkpoint_dir):
     extra = split_of(load_logs("d"), "test")
     return extra
 ''')
@@ -44,6 +44,14 @@ def test_removing_contract_function_is_rejected() -> None:
 def test_changed_fit_predict_signature_is_rejected() -> None:
     bad = replace_agent_zone(TEMPLATE, "def fit_predict(df):\n    return []\n")
     assert any("signature" in p for p in lint_generated_code(bad))
+
+
+def test_dropping_the_valid_arg_is_rejected() -> None:
+    """`valid` is how the pipeline does honest model selection; losing it silently
+    sends the agent back to an internal split of train, which is memorisation-inflated."""
+    old = replace_agent_zone(
+        TEMPLATE, "def fit_predict(train, target, checkpoint_dir):\n    return []\n")
+    assert any("signature" in p for p in lint_generated_code(old))
 
 
 def test_zone_replacement_preserves_io_contract() -> None:

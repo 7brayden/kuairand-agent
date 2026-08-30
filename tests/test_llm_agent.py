@@ -122,7 +122,7 @@ def test_backtrack_only_targets_accepted_nodes() -> None:
 def test_policy_prompt_carries_the_contracts_and_history() -> None:
     client = FakeClient(['```json\n{"action":"tune","hypothesis":"h"}\n```'])
     p = LLMPolicy(client, ["model", "tune"])
-    p.current_zone = "def fit_predict(train, target, checkpoint_dir): ..."
+    p.current_zone = "def fit_predict(train, valid, target, checkpoint_dir): ..."
     p.propose(RunState(), [entry(0, accepted=True, gauc=0.66, ndcg5=0.53)])
     prompt = client.prompts_seen[0]
     for must in ["Within-user", "long_view", "0.6016", "0.002", "hypothesis 0",
@@ -133,7 +133,7 @@ def test_policy_prompt_carries_the_contracts_and_history() -> None:
 # ------------------------------ code generation --------------------------------------
 
 GOOD_ZONE = '''```python
-def fit_predict(train, target, checkpoint_dir):
+def fit_predict(train, valid, target, checkpoint_dir):
     """Item popularity."""
     import numpy as np
     rate = train.groupby("video_id")["long_view"].mean()
@@ -151,7 +151,7 @@ def test_generator_produces_lintable_source() -> None:
 
 
 def test_generator_repairs_a_rejected_first_attempt() -> None:
-    broken = '```python\ndef fit_predict(train, target, checkpoint_dir):\n    x = (\n```'
+    broken = '```python\ndef fit_predict(train, valid, target, checkpoint_dir):\n    x = (\n```'
     client = FakeClient([broken, GOOD_ZONE])
     out = LLMCodeGenerator(client).generate(
         ActionProposal("model", "h"), TEMPLATE, {})
@@ -160,14 +160,14 @@ def test_generator_repairs_a_rejected_first_attempt() -> None:
 
 
 def test_generator_gives_up_after_max_repairs() -> None:
-    broken = '```python\ndef fit_predict(train, target, checkpoint_dir):\n    x = (\n```'
+    broken = '```python\ndef fit_predict(train, valid, target, checkpoint_dir):\n    x = (\n```'
     with pytest.raises(CodeGenError):
         LLMCodeGenerator(FakeClient([broken, broken])).generate(
             ActionProposal("model", "h"), TEMPLATE, {})
 
 
 def test_generator_rejects_test_split_access_before_execution() -> None:
-    leak = ('```python\ndef fit_predict(train, target, checkpoint_dir):\n'
+    leak = ('```python\ndef fit_predict(train, valid, target, checkpoint_dir):\n'
             '    t = split_of(train, "test")\n    return t\n```')
     with pytest.raises(CodeGenError):
         LLMCodeGenerator(FakeClient([leak, leak])).generate(

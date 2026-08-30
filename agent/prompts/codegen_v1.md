@@ -24,8 +24,13 @@ unattended, with no human review.
 1. Output **one fenced python block** and nothing else that matters. Prose outside the
    fence is ignored.
 2. The block replaces the agent-owned zone. It **must** define
-   `fit_predict(train, target, checkpoint_dir)` returning a numpy array of exactly
+   `fit_predict(train, valid, target, checkpoint_dir)` returning a numpy array of exactly
    `len(target)` finite floats, in `target`'s existing row order.
+   **Use `valid` for early stopping and model selection** — it is the real validation
+   split, the same one the published FM baseline tunes against. Do NOT carve your own
+   holdout out of `train`: `train` and `valid` are separated in time, so an internal
+   split of `train` is inflated by user-video memorisation and will tell you a model is
+   far better than it is. Never early-stop on `target`.
 3. **Do not** reorder, sort, group, or deduplicate `target`. Row order is the
    submission contract and the official validator rejects any other order.
 4. **Never** reference the test split — not by name, not by date literal. You may use

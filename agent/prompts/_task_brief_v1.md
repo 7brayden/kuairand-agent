@@ -59,6 +59,11 @@ max_epochs=40, patience=4` — 40 epochs with early stopping, ~40s on one CPU co
 1.14M training rows. Any model you write from scratch has to actually converge to be
 worth judging.
 
+Your pipeline is handed `train`, `valid`, and `target` separately. Select on `valid`
+exactly as the baseline does — an internal holdout carved from `train` will look far
+better than it is, because `train` and `valid` are separated in time and user-video
+pairs memorised in `train` go cold afterwards.
+
 A from-scratch SGD/embedding model that runs a handful of epochs will score far below
 its potential for reasons that have **nothing to do with your hypothesis**. If you
 implement FM, BPR, or anything else trained by gradient descent: give it a comparable
