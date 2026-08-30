@@ -6,15 +6,26 @@ on later iterations.
 
 Acceptance rule
 ---------------
-Accept iff the run produced a valid submission AND its validation primary beats the
-current best by more than the organisers' epsilon (0.002 ~ 2.5 sigma of seed noise).
-Comparing against the RUN BEST rather than the parent means a lucky-looking sideways
-move cannot ratchet the tree sideways forever.
+Accept iff the run produced a valid submission AND its validation primary is the best
+seen so far — by ANY margin, not by epsilon.
 
-Known limitation (deliberate, documented): this is greedy hill-climbing. It never
-keeps a neutral change that might enable a later win. Tree search mitigates it —
-the policy can branch from any earlier accepted node — but a real exploration budget
-is the obvious next upgrade.
+Epsilon belongs to convergence, not to acceptance, and conflating them was a real bug:
+a run scored 0.5984 against a tip of 0.5970, the +0.0014 gain fell under epsilon, so the
+iteration was rejected and its workspace reverted — while ``RunState.best_node()``, which
+scans every scored node, still named it the validation best. The submission pipeline then
+had a validation-best node with no commit and no checkpoint, and ``final_eval.py`` would
+have refused to produce a submission at all.
+
+So: whatever scores best MUST be committed and checkpointed, because that is the artifact
+the hidden test is run on. Epsilon still governs convergence (``agent/state.py``), which
+reads the score sequence and is unaffected by what the critic accepts.
+
+The cost is accepting improvements smaller than seed noise. That is the right trade: an
+over-retained checkpoint costs disk, while a discarded best checkpoint costs the score.
+
+Known limitation (deliberate, documented): this is still greedy hill-climbing — it never
+keeps a neutral change that might enable a later win. Tree search mitigates it, since the
+policy can branch from any earlier accepted node.
 """
 
 from __future__ import annotations
@@ -35,7 +46,11 @@ class Verdict:
 
 def judge(state: RunState, execution: Optional[ExecutionResult],
           metrics: Optional[dict], epsilon: float = 0.002) -> Verdict:
-    """Decide accept/reject for one iteration."""
+    """Decide accept/reject for one iteration.
+
+    ``epsilon`` is used only to describe whether a gain clears the noise floor in the
+    journalled reason; it does NOT gate acceptance. See the module docstring.
+    """
     if execution is not None and execution.timed_out:
         return Verdict(False, "timed out — no score produced",
                        "The change did not terminate inside the budget. Prefer a cheaper "
@@ -55,11 +70,17 @@ def judge(state: RunState, execution: Optional[ExecutionResult],
         return Verdict(True, f"first scored iteration (primary {primary:.4f})",
                        "Baseline established; subsequent changes are measured against it.")
     delta = primary - best_primary
-    if delta > epsilon:
+    if delta > 0:
+        noise = ("above the noise floor" if delta > epsilon
+                 else f"within seed noise (eps {epsilon}), retained anyway because the "
+                      f"best-scoring checkpoint is what the hidden test is run on")
         return Verdict(True, f"primary {primary:.4f} beats best {best_primary:.4f} "
-                             f"(+{delta:.4f} > eps {epsilon})",
-                       f"Improvement of {delta:.4f} confirmed above noise.")
+                             f"(+{delta:.4f}, {noise})",
+                       f"Improvement of {delta:.4f}"
+                       + ("" if delta > epsilon else
+                          " — under epsilon, so it does not reset convergence patience; "
+                          "a bigger effect is needed to keep the run alive."))
     return Verdict(False, f"primary {primary:.4f} vs best {best_primary:.4f} "
-                          f"({delta:+.4f}, not > eps {epsilon})",
-                   f"No gain above noise ({delta:+.4f}). This direction is exhausted or "
-                   f"the effect is smaller than seed variance; try a different lever.")
+                          f"({delta:+.4f}, no improvement)",
+                   f"No improvement ({delta:+.4f}). This direction is exhausted or the "
+                   f"effect is smaller than seed variance; try a different lever.")

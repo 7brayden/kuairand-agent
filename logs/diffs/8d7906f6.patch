@@ -1,0 +1,281 @@
+From 1db82ee71a6b1a8f29ca8e11a06ec15e6b63a836 Mon Sep 17 00:00:00 2001
+From: kuairand-agent <agent@kuairand.local>
+Date: Mon, 31 Aug 2026 01:49:08 +0800
+Subject: [PATCH] =?UTF-8?q?model:=20Since=20no=20baseline=20pipeline=20exi?=
+ =?UTF-8?q?sts=20yet,=20first=20implement=20the=20FM=20baseline=20?=
+ =?UTF-8?q?=E2=80=A6=20[8d7906f6]?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ main.py | 252 ++++++++++++++++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 228 insertions(+), 24 deletions(-)
+
+diff --git a/main.py b/main.py
+index de7c78a..e11c527 100644
+--- a/main.py
++++ b/main.py
+@@ -76,32 +76,236 @@ def write_predictions(out_dir: str, target: pd.DataFrame, scores: np.ndarray) ->
+ 
+ 
+ # ------------------------------- AGENT-OWNED ZONE -----------------------------------
+-# Everything below is what the agent rewrites. The seed implementation deliberately
+-# contains no ML: it scores every row 0.0, which is a valid-but-worthless submission.
+-# Milestone 0 (harness proof) runs exactly this.
++import numpy as np
++import pandas as pd
++import os
++import pickle
++
++# ---------------------------------------------------------------------------
++# FM baseline: user_id, video_id, tab, duration_bucket, hourmin_bucket fields.
++# Trained with plain SGD on logistic loss (as per published baseline spec).
++# Early stopping on valid primary metric = mean(GAUC, nDCG@5).
++# ---------------------------------------------------------------------------
++
++FIELDS = ["user_id", "video_id", "tab", "duration_bucket", "hourmin_bucket"]
++K = 16
++LR = 0.001
++BATCH = 8192
++MAX_EPOCHS = 40
++PATIENCE = 4
++L2 = 1e-6
++SEED = 0
++
++
++def _build_vocab(series):
++    uniques = pd.unique(series.dropna())
++    vocab = {v: i + 1 for i, v in enumerate(uniques)}  # 0 reserved for OOV/unknown
++    return vocab
++
++
++def _map_ids(series, vocab):
++    return series.map(vocab).fillna(0).astype(np.int64).values
++
++
++def _make_duration_bucket(duration_ms, edges=None, n_bins=10):
++    if edges is None:
++        qs = np.linspace(0, 1, n_bins + 1)[1:-1]
++        edges = np.quantile(duration_ms.astype(float), qs)
++    idx = np.digitize(duration_ms.astype(float), edges) + 1  # 1..n_bins, 0 reserved
++    return idx.astype(np.int64), edges
++
++
++def _make_hour_bucket(hourmin):
++    hm = hourmin.astype(float)
++    hour = (hm // 100.0)
++    hour = np.clip(hour, 0, 23)
++    hour = np.nan_to_num(hour, nan=0.0)
++    return (hour.astype(np.int64) + 1)  # 1..24, 0 reserved for OOV
++
++
++def _build_feature_indices(df, vocabs, duration_edges):
++    idx = {}
++    idx["user_id"] = _map_ids(df["user_id"], vocabs["user_id"])
++    idx["video_id"] = _map_ids(df["video_id"], vocabs["video_id"])
++    idx["tab"] = _map_ids(df["tab"].astype(str), vocabs["tab"])
++    db, _ = _make_duration_bucket(df["duration_ms"].fillna(0).values, edges=duration_edges)
++    idx["duration_bucket"] = db
++    idx["hourmin_bucket"] = _make_hour_bucket(df["hourmin"].fillna(0).values)
++    return idx
++
++
++def _sigmoid(x):
++    return 1.0 / (1.0 + np.exp(-np.clip(x, -30, 30)))
++
++
++def _fm_predict(idx, w0, W, V):
++    B = len(idx[FIELDS[0]])
++    S = np.zeros((B, K), dtype=np.float32)
++    sq_sum = np.zeros((B, K), dtype=np.float32)
++    linear = np.full(B, w0, dtype=np.float32)
++    for f in FIELDS:
++        ids = idx[f]
++        v = V[f][ids]
++        S += v
++        sq_sum += v * v
++        linear += W[f][ids]
++    interaction = 0.5 * np.sum(S * S - sq_sum, axis=1)
++    return linear + interaction
++
++
++def _compute_gauc(user_ids, y, score):
++    df = pd.DataFrame({"u": user_ids, "y": y.astype(np.float64), "s": score})
++    df["rank"] = df.groupby("u")["s"].rank(method="average")
++    df["rank_pos"] = df["rank"] * df["y"]
++    g = df.groupby("u").agg(n=("y", "size"), npos=("y", "sum"),
++                             sumrank_pos=("rank_pos", "sum"))
++    valid = (g["npos"] > 0) & (g["npos"] < g["n"])
++    g = g[valid]
++    nneg = g["n"] - g["npos"]
++    auc = (g["sumrank_pos"] - g["npos"] * (g["npos"] + 1) / 2.0) / (g["npos"] * nneg)
++    weights = g["n"].values
++    if len(auc) == 0:
++        return 0.5
++    return float(np.average(auc.values, weights=weights))
++
++
++def _compute_ndcg5(user_ids, y, score):
++    df = pd.DataFrame({"u": user_ids, "y": y.astype(np.float64), "s": score})
++    # DCG: sort by score desc within user
++    df_sorted = df.sort_values(["u", "s"], ascending=[True, False])
++    df_sorted["rank"] = df_sorted.groupby("u").cumcount()
++    top = df_sorted[df_sorted["rank"] < 5].copy()
++    top["gain"] = top["y"] / np.log2(top["rank"] + 2)
++    dcg = top.groupby("u")["gain"].sum()
++    # IDCG: sort by y desc within user
++    df_ideal = df.sort_values(["u", "y"], ascending=[True, False])
++    df_ideal["rank"] = df_ideal.groupby("u").cumcount()
++    itop = df_ideal[df_ideal["rank"] < 5].copy()
++    itop["gain"] = itop["y"] / np.log2(itop["rank"] + 2)
++    idcg = itop.groupby("u")["gain"].sum()
++    both = pd.concat([dcg.rename("dcg"), idcg.rename("idcg")], axis=1).fillna(0.0)
++    both = both[both["idcg"] > 0]
++    if len(both) == 0:
++        return 0.0
++    ndcg = both["dcg"] / both["idcg"]
++    return float(ndcg.mean())
++
+ 
+ def fit_predict(train: pd.DataFrame, valid: pd.DataFrame, target: pd.DataFrame,
+-                checkpoint_dir: str) -> np.ndarray:
+-    """Fit on `train`, return one score per row of `target` (canonical order).
+-
+-    Args:
+-        train: the training split (20220408-0421), all raw log columns.
+-        valid: the validation split (20220422-0428). **Use this for early stopping and
+-            model selection** — the official FM baseline evaluates on it every epoch and
+-            stops after 4 rounds without improvement. Never early-stop on `target`.
+-        target: the split to score; return exactly len(target) scores.
+-        checkpoint_dir: write anything needed to reproduce inference here.
+-
+-    Note during development `target` IS `valid` (same rows) — that is the organisers'
+-    own methodology, matching how the published baseline is tuned. At final evaluation
+-    `target` becomes the held-out test split while `valid` stays the validation split,
+-    so code that selects on `valid` transfers correctly and code that peeks at `target`'s
+-    labels does not.
+-
+-    Returns:
+-        np.ndarray of shape (len(target),), finite floats, relative order only.
+-    """
+-    return np.zeros(len(target), dtype=float)
++                 checkpoint_dir: str) -> np.ndarray:
++    rng = np.random.RandomState(SEED)
++    os.makedirs(checkpoint_dir, exist_ok=True)
++
++    y_train = train["long_view"].astype(np.float32).values
++    y_valid = valid["long_view"].astype(np.float32).values
++
++    # build vocabularies from train only
++    vocabs = {
++        "user_id": _build_vocab(train["user_id"]),
++        "video_id": _build_vocab(train["video_id"]),
++        "tab": _build_vocab(train["tab"].astype(str)),
++    }
++    _, duration_edges = _make_duration_bucket(train["duration_ms"].fillna(0).values)
++
++    idx_train = _build_feature_indices(train, vocabs, duration_edges)
++    idx_valid = _build_feature_indices(valid, vocabs, duration_edges)
++    idx_target = _build_feature_indices(target, vocabs, duration_edges)
++
++    vocab_sizes = {
++        "user_id": len(vocabs["user_id"]) + 1,
++        "video_id": len(vocabs["video_id"]) + 1,
++        "tab": len(vocabs["tab"]) + 1,
++        "duration_bucket": 12,
++        "hourmin_bucket": 26,
++    }
++
++    w0 = 0.0
++    W = {f: np.zeros(vocab_sizes[f], dtype=np.float32) for f in FIELDS}
++    V = {f: (rng.randn(vocab_sizes[f], K).astype(np.float32) * 0.01) for f in FIELDS}
++
++    n = len(train)
++    best_score = -np.inf
++    best_state = None
++    epochs_no_improve = 0
++
++    print(f"[FM] train_rows={n} valid_rows={len(valid)} vocab_sizes={vocab_sizes}")
++
++    for epoch in range(1, MAX_EPOCHS + 1):
++        order = rng.permutation(n)
++        total_loss = 0.0
++        n_batches = 0
++        for start in range(0, n, BATCH):
++            batch_idx = order[start:start + BATCH]
++            idx_b = {f: idx_train[f][batch_idx] for f in FIELDS}
++            y_b = y_train[batch_idx]
++            B = len(batch_idx)
++
++            S = np.zeros((B, K), dtype=np.float32)
++            V_list = {}
++            for f in FIELDS:
++                v = V[f][idx_b[f]]
++                V_list[f] = v
++                S += v
++            sq_sum = sum((V_list[f] * V_list[f]) for f in FIELDS)
++            interaction = 0.5 * np.sum(S * S - sq_sum, axis=1)
++            linear = np.full(B, w0, dtype=np.float32)
++            for f in FIELDS:
++                linear += W[f][idx_b[f]]
++            score = linear + interaction
++            pred = _sigmoid(score)
++            grad = (pred - y_b).astype(np.float32)  # (B,)
++
++            eps = 1e-7
++            loss = -np.mean(y_b * np.log(pred + eps) + (1 - y_b) * np.log(1 - pred + eps))
++            total_loss += loss
++            n_batches += 1
++
++            # updates
++            w0 -= LR * (np.mean(grad) + L2 * w0)
++            for f in FIELDS:
++                ids = idx_b[f]
++                gW = grad + L2 * W[f][ids]
++                np.add.at(W[f], ids, -LR * gW)
++                v_f = V_list[f]
++                dV = grad[:, None] * (S - v_f) + L2 * v_f
++                np.add.at(V[f], ids, -LR * dV)
++
++        avg_loss = total_loss / max(n_batches, 1)
++
++        # validation
++        val_score = _fm_predict(idx_valid, w0, W, V)
++        gauc = _compute_gauc(valid["user_id"].values, y_valid, val_score)
++        ndcg5 = _compute_ndcg5(valid["user_id"].values, y_valid, val_score)
++        primary = (gauc + ndcg5) / 2.0
++
++        print(f"[FM] epoch={epoch} train_logloss={avg_loss:.5f} "
++              f"valid_GAUC={gauc:.4f} valid_nDCG5={ndcg5:.4f} valid_primary={primary:.4f}")
++
++        if primary > best_score + 1e-5:
++            best_score = primary
++            best_state = (w0, {f: W[f].copy() for f in FIELDS},
++                          {f: V[f].copy() for f in FIELDS})
++            epochs_no_improve = 0
++        else:
++            epochs_no_improve += 1
++            if epochs_no_improve >= PATIENCE:
++                print(f"[FM] early stopping at epoch={epoch}, best_valid_primary={best_score:.4f}")
++                break
++
++    if best_state is None:
++        best_state = (w0, W, V)
++    w0_best, W_best, V_best = best_state
++
++    with open(os.path.join(checkpoint_dir, "fm_model.pkl"), "wb") as fh:
++        pickle.dump({"w0": w0_best, "W": W_best, "V": V_best,
++                     "vocabs": vocabs, "duration_edges": duration_edges,
++                     "vocab_sizes": vocab_sizes}, fh)
++
++    print(f"[FM] final best_valid_primary={best_score:.4f}")
++
++    target_score = _fm_predict(idx_target, w0_best, W_best, V_best)
++    target_score = np.nan_to_num(target_score, nan=0.0, posinf=0.0, neginf=0.0)
++    return target_score.astype(np.float64)
+ 
+ 
+ # --------------------------- END AGENT-OWNED ZONE -----------------------------------
+-- 
+2.39.5 (Apple Git-154)
