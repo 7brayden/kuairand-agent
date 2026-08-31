@@ -1,0 +1,80 @@
+From 913327b7ea89b36f7137e65f1481a89fda894f5e Mon Sep 17 00:00:00 2001
+From: kuairand-agent <agent@kuairand.local>
+Date: Mon, 31 Aug 2026 16:53:00 +0800
+Subject: [PATCH] =?UTF-8?q?feature:=20Add=20two=20new=20FM=20fields=20deri?=
+ =?UTF-8?q?ved=20from=20`hourmin`=20(hour-of-day=20bucket)=20and=20`?=
+ =?UTF-8?q?=E2=80=A6=20[6a261631]?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ main.py | 34 +++++++++++++++++++++++++++++++++-
+ 1 file changed, 33 insertions(+), 1 deletion(-)
+
+diff --git a/main.py b/main.py
+index 9f6e731..fbe8725 100644
+--- a/main.py
++++ b/main.py
+@@ -98,13 +98,23 @@ import pandas as pd
+ from evaluate import evaluate
+ from baseline import FM
+ 
+-FIELDS = ['user_id', 'video_id', 'author_id', 'tab', 'dur_bucket']
++FIELDS = ['user_id', 'video_id', 'author_id', 'tab', 'dur_bucket', 'hour_bucket', 'date_bucket']
+ 
+ 
+ def _dur_bucket(duration_ms, edges):
+     return np.digitize(duration_ms, edges[1:-1])
+ 
+ 
++def _hour_bucket(hourmin):
++    # hourmin encodes HHMM; collapse to hour-of-day, then bucket into 6 four-hour blocks
++    hour = (hourmin.astype(np.int64) // 100) % 24
++    return (hour // 4).astype(np.int64)
++
++
++def _date_bucket(date, edges):
++    return np.digitize(date, edges[1:-1])
++
++
+ def fit_predict(train: pd.DataFrame, valid: pd.DataFrame, target: pd.DataFrame,
+                  checkpoint_dir: str) -> np.ndarray:
+     os.makedirs(checkpoint_dir, exist_ok=True)
+@@ -117,12 +127,34 @@ def fit_predict(train: pd.DataFrame, valid: pd.DataFrame, target: pd.DataFrame,
+     db_valid = _dur_bucket(valid['duration_ms'].values, edges)
+     db_target = _dur_bucket(target['duration_ms'].values, edges)
+ 
++    # --- hour-of-day bucket, derived purely from hourmin (no leakage possible) ---
++    hb_train = _hour_bucket(train['hourmin'].values)
++    hb_valid = _hour_bucket(valid['hourmin'].values)
++    hb_target = _hour_bucket(target['hourmin'].values)
++
++    # --- date bucket: days-since-train-start, quantile-bucketed on train only ---
++    date_min = train['date'].values.min()
++    d_train = (train['date'].values - date_min).astype(np.float64)
++    d_valid = (valid['date'].values - date_min).astype(np.float64)
++    d_target = (target['date'].values - date_min).astype(np.float64)
++    n_date_buckets = min(10, max(2, len(np.unique(d_train))))
++    date_edges = np.quantile(d_train, np.linspace(0, 1, n_date_buckets + 1))
++    date_edges[0] = -np.inf
++    date_edges[-1] = np.inf
++    db2_train = _date_bucket(d_train, date_edges)
++    db2_valid = _date_bucket(d_valid, date_edges)
++    db2_target = _date_bucket(d_target, date_edges)
++
+     # --- build integer vocabularies per field, offset for a single embedding table ---
+     codes = {'train': [], 'valid': [], 'target': []}
+     offset = 0
+     for field in FIELDS:
+         if field == 'dur_bucket':
+             v_tr, v_va, v_ta = db_train, db_valid, db_target
++        elif field == 'hour_bucket':
++            v_tr, v_va, v_ta = hb_train, hb_valid, hb_target
++        elif field == 'date_bucket':
++            v_tr, v_va, v_ta = db2_train, db2_valid, db2_target
+         else:
+             v_tr = train[field].values
+             v_va = valid[field].values
+-- 
+2.39.5 (Apple Git-154)
