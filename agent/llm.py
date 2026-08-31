@@ -55,6 +55,10 @@ class LLMClient:
     effort: Optional[str] = None   # default output_config.effort; per-call override in complete()
     temperature: float = 1.0       # AZURE ONLY. Claude 5 models reject sampling params (400).
     max_retries: int = 3
+    timeout_seconds: float = 180.0   # per request. The SDK default is 600s, and with
+                                     # retries a hung call stalled one iteration for 44
+                                     # minutes. A codegen call taking >3min is pathological;
+                                     # failing fast and retrying beats waiting.
     tokens_in: int = 0
     tokens_out: int = 0
     calls: int = 0
@@ -94,14 +98,16 @@ class LLMClient:
             if not endpoint or not key:
                 raise LLMError("AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY must be set")
             self._client = AzureOpenAI(
-                azure_endpoint=endpoint, api_key=key,
+                azure_endpoint=endpoint, api_key=key, timeout=self.timeout_seconds,
+                max_retries=0,  # we own the retry loop
                 api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21"))
         else:
             try:
                 import anthropic  # imported lazily: milestone 0 needs no provider
             except ImportError as exc:  # pragma: no cover - environment dependent
                 raise LLMError(f"anthropic SDK not installed: {exc}") from exc
-            self._client = anthropic.Anthropic()
+            self._client = anthropic.Anthropic(timeout=self.timeout_seconds,
+                                               max_retries=0)  # we own the retry loop
         return self._client
 
     def _call_azure(self, client: Any, prompt: str,

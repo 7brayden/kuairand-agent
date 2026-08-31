@@ -256,7 +256,8 @@ class LLMCodeGenerator:
 
     client: LLMClient
     prompt_name: str = "codegen_v1"
-    max_repairs: int = 1
+    max_repairs: int = 2   # 3 attempts. Two consecutive syntax errors ended an
+                           # iteration that a third attempt would likely have saved.
     #: Writing the code is mechanical once the hypothesis is fixed; deep reasoning here
     #: buys little and thinking tokens count toward the scored total. Keep it lower than
     #: the policy's.
@@ -302,9 +303,13 @@ class LLMCodeGenerator:
                 problems = [str(exc)]
                 continue
 
+            # Refinement actions should edit. Push back once, but do not spend the whole
+            # iteration on the argument: on the last attempt a rewrite is accepted, since
+            # a worse-shaped change still beats no change at all.
             if (mode == "rewrite"
                     and proposal.action_type in EDIT_REQUIRED_ACTIONS
-                    and not is_stub_zone(current_zone)):
+                    and not is_stub_zone(current_zone)
+                    and attempt < self.max_repairs):
                 problems = [
                     f"`{proposal.action_type}` is a refinement of code that already works, "
                     f"so it must be expressed as SEARCH/REPLACE edits, not a full rewrite. "

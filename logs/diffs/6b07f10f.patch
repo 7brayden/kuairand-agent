@@ -1,0 +1,31 @@
+From 5798ec20e0d98193caf3270a9d478f004dc8492a Mon Sep 17 00:00:00 2001
+From: kuairand-agent <agent@kuairand.local>
+Date: Mon, 31 Aug 2026 17:37:26 +0800
+Subject: [PATCH] =?UTF-8?q?tune:=20The=20iteration-0=20loss=20curve=20show?=
+ =?UTF-8?q?s=20train=5Floss=20monotonically=20falling=20(0.64=E2=80=A6=20[?=
+ =?UTF-8?q?6b07f10f]?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ main.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/main.py b/main.py
+index 6bc2094..3028a11 100644
+--- a/main.py
++++ b/main.py
+@@ -189,8 +189,8 @@ def fit_predict(train: pd.DataFrame, valid: pd.DataFrame, target: pd.DataFrame,
+ 
+     # ---- train FM with early stopping on valid ----
+     k = 16
+-    lr = 0.001
+-    l2 = 1e-6
++    lr = 0.0007
++    l2 = 3e-5
+     bs = 8192
+     max_epochs = 40
+     patience = 4
+-- 
+2.39.5 (Apple Git-154)

@@ -162,7 +162,7 @@ def test_generator_repairs_a_rejected_first_attempt() -> None:
 def test_generator_gives_up_after_max_repairs() -> None:
     broken = '```python\ndef fit_predict(train, valid, target, checkpoint_dir, unbiased):\n    x = (\n```'
     with pytest.raises(CodeGenError):
-        LLMCodeGenerator(FakeClient([broken, broken])).generate(
+        LLMCodeGenerator(FakeClient([broken] * 3)).generate(
             ActionProposal("model", "h"), TEMPLATE, {})
 
 
@@ -170,7 +170,7 @@ def test_generator_rejects_test_split_access_before_execution() -> None:
     leak = ('```python\ndef fit_predict(train, valid, target, checkpoint_dir, unbiased):\n'
             '    t = split_of(train, "test")\n    return t\n```')
     with pytest.raises(CodeGenError):
-        LLMCodeGenerator(FakeClient([leak, leak])).generate(
+        LLMCodeGenerator(FakeClient([leak] * 3)).generate(
             ActionProposal("model", "h"), TEMPLATE, {})
 
 
@@ -356,11 +356,24 @@ def test_codegen_prompt_teaches_when_to_edit() -> None:
 # work, so the guard rejects a rewrite for refinement actions before execution.
 
 @pytest.mark.parametrize("action", ["tune", "feature", "debug"])
-def test_refinement_actions_may_not_rewrite_working_code(action: str) -> None:
-    from agent.codegen import CodeGenError
-    with pytest.raises(CodeGenError):
-        LLMCodeGenerator(FakeClient([GOOD_ZONE, GOOD_ZONE])).generate(
-            ActionProposal(action, "h"), _source_with(WORKING_ZONE), {})
+def test_refinement_actions_are_pushed_back_toward_editing(action: str) -> None:
+    """First rewrite is refused and the model is told to send edits instead."""
+    client = FakeClient([GOOD_ZONE, EDIT_RESPONSE])
+    out = LLMCodeGenerator(client).generate(
+        ActionProposal(action, "h"), _source_with(WORKING_ZONE), {})
+    assert out.config["mode"] == "edit"
+    assert "not a full rewrite" in client.prompts_seen[1]
+
+
+@pytest.mark.parametrize("action", ["tune", "feature", "debug"])
+def test_an_insisted_rewrite_is_accepted_rather_than_losing_the_iteration(action: str) -> None:
+    """A run once spent a whole iteration — 44 minutes — arguing about this and produced
+    nothing. A rewrite is worse than an edit; both beat no change at all."""
+    client = FakeClient([GOOD_ZONE] * 3)
+    out = LLMCodeGenerator(client).generate(
+        ActionProposal(action, "h"), _source_with(WORKING_ZONE), {})
+    assert out.config["mode"] == "rewrite"
+    assert out.config["repairs"] == 2       # pushed back twice, then accepted
 
 
 @pytest.mark.parametrize("action", ["tune", "feature", "debug"])
@@ -452,3 +465,17 @@ def test_healthy_progress_is_not_flagged() -> None:
     for i, e in enumerate(history):
         e.action_type = ["model", "tune", "feature", "tune"][i]
     assert "You are stuck" not in memory.summarize_journal(history)
+
+
+def test_llm_requests_have_an_explicit_timeout() -> None:
+    """The SDK default is 600s per request; with retries a hung call stalled one
+    iteration for 44 minutes. Robustness is judged on never stalling."""
+    c = LLMClient(prompts_dir=PROMPTS)
+    assert c.timeout_seconds <= 300, "an LLM call must fail fast rather than hang"
+
+
+def test_config_sets_the_timeout_too() -> None:
+    import yaml
+    cfg = yaml.safe_load((Path(__file__).resolve().parent.parent
+                          / "configs/agent.yaml").read_text())
+    assert cfg["llm"]["timeout_seconds"] <= 300

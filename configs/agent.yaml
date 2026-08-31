@@ -43,6 +43,9 @@ llm:
                             # 8192 truncated generated code mid-block. 16000 is the
                             # recommended non-streaming default (stays under HTTP timeouts).
   max_retries: 3
+  timeout_seconds: 180      # per LLM request. The SDK default of 600s let a hung call
+                            # stall one iteration for 44 minutes; Robustness is judged on
+                            # never stalling, so fail fast and retry instead.
   temperature: 0.7          # AZURE/OpenAI only — ignored on Anthropic (which rejects it).
                             # Some diversity stops a smaller model proposing the same
                             # hypothesis every iteration.

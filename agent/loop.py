@@ -145,6 +145,7 @@ class AgentRun:
             prompts_dir=self.root / self.paths["prompts"],
             max_output_tokens=agent_cfg["llm"]["max_output_tokens"],
             max_retries=agent_cfg["llm"].get("max_retries", 3),
+            timeout_seconds=agent_cfg["llm"].get("timeout_seconds", 180.0),
             effort=agent_cfg["llm"].get("effort"),
             temperature=agent_cfg["llm"].get("temperature", 1.0),
         )
