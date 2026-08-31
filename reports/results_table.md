@@ -26,3 +26,8 @@ Headroom used: +0.7% of the 0.2468 available above baseline.
 | 1 | `1e6ee9d6` | model | rewrite | — | — | — | no | code_error |
 | 2 | `73f751cc` | debug | edit×1 | 0.6473 | 0.5283 | 0.5878 | no | — |
 | 3 | `6a261631` | feature | edit×3 | 0.6694 | 0.5371 | 0.6033 | yes | — |
+
+## Hidden test (scored once)
+
+See `final_result.json`.
+

@@ -71,7 +71,9 @@ def main() -> None:
     out_dir = ROOT / "logs" / "_final" / best.node_id
     shutil.rmtree(out_dir, ignore_errors=True)
     out_dir.mkdir(parents=True, exist_ok=True)
-    res = run_pipeline([cfg["executor"].get("python", "python3"), "main.py",
+    # `python: null` in config means "use the harness interpreter" — .get()'s default
+    # does not apply to a key that exists with a null value, so fall back explicitly.
+    res = run_pipeline([cfg["executor"].get("python") or sys.executable, "main.py",
                         "--data-dir", data_dir, "--split", "test",
                         "--out-dir", str(out_dir)],
                        cwd=ws.path,
