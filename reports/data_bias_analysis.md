@@ -57,11 +57,40 @@ Per-video long_view rate, biased train vs unbiased random log, over the 3,398 vi
 An item-popularity feature built from the standard log is therefore measuring "what the
 recommender promoted" at least as much as "what people actually watch".
 
+## 6. Training groups are 6-8x larger than evaluation groups
+
+The evaluator groups strictly by `user_id` (`eval/official/evaluate.py`), so a "group" is
+one user's impressions within the split:
+
+| split | groups | median size | mean | users with mixed labels |
+|---|---|---|---|---|
+| train | 26,210 | **31** | 43.5 | 92.7% |
+| valid | 22,377 | **4** | 5.6 | 57.8% |
+| test | 23,875 | **5** | 7.1 | 63.7% |
+
+Any pairwise or listwise objective trained with `group = user_id` on the train split
+therefore learns to order ~31-43 item lists, and is then scored on ~5-7 item lists.
+nDCG@5 covers nearly an entire evaluation list but only the top ~12% of a training one,
+and softmax/lambdarank gradients both depend on list length. The objective is aligned in
+form and mismatched in scale — a plausible reason lambdarank, BPR and listwise softmax
+have each failed to beat a pointwise FM here.
+
+**Training group construction is a free parameter.** The evaluator's grouping is fixed,
+but nothing requires training groups to be whole users: chunking each user's training
+impressions into blocks of ~5-7, or grouping by `(user_id, date)` (median 3 in train),
+would match training list length to evaluation list length. Untested.
+
+Note also that 36-42% of evaluation users have all-positive or all-negative labels, so
+they contribute a constant to nDCG and are excluded from GAUC entirely — against 7.3% in
+train. Training over-represents the discriminative case.
+
 ## What this does and does not license
 
-**Actionable.** Recency or inverse-frequency weighting of training rows (finding 2);
-preferring factorised interactions over explicit crosses (finding 1); using the random
-log as an unbiased *diagnostic* of item quality (finding 5).
+**Actionable.** Matching training group size to evaluation group size for any
+pairwise/listwise objective (finding 6 — the most concrete untested lever, and it
+subsumes several failed attempts); recency or inverse-frequency weighting of training
+rows (finding 2); preferring factorised interactions over explicit crosses (finding 1);
+using the random log as an unbiased *diagnostic* of item quality (finding 5).
 
 **A trap.** Full exposure debiasing (IPS and friends). The evaluation ranks *within the
 recommender's own impressions* — biased traffic is the target distribution, not a

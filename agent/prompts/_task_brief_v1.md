@@ -55,7 +55,23 @@ exposure — a 3.69x lift, impression gini 0.72.
 > recommender's own impressions*. Biased traffic is the distribution you are being tested
 > on, not a nuisance to correct away; debiasing optimises for an exam you are not sitting.
 
-**5. Popularity measured on biased traffic is a weak proxy for quality.** Per-video
+**5. Training groups are 6-8x larger than evaluation groups — and training group
+construction is yours to choose.** The evaluator groups strictly by `user_id`, giving
+median 4 impressions per group in valid and 5 in test. The train split has median **31**
+per user. So a ranker trained with `group = user_id` learns to order ~31-43 item lists
+and is scored on ~5-7 item lists; nDCG@5 is nearly a whole evaluation list but the top
+~12% of a training one, and both softmax and lambdarank gradients depend on list length.
+
+> This is a strong candidate explanation for why lambdarank, BPR and listwise softmax
+> have each failed to beat a pointwise FM here: aligned in form, mismatched in scale.
+> You cannot change how you are evaluated, but nothing requires training groups to be
+> whole users — chunking each user's training impressions into blocks of ~5-7, or
+> grouping by `(user_id, date)` (median 3), matches the two. **Untested.**
+>
+> Related: 36-42% of evaluation users are all-positive or all-negative, so they add a
+> constant to nDCG and are dropped from GAUC entirely, against only 7.3% in train.
+
+**6. Popularity measured on biased traffic is a weak proxy for quality.** Per-video
 long_view rate on train correlates only **0.375** with the same rate measured on
 unbiased random exposure (3,398 comparable videos; means 0.304 vs 0.108). An item-
 popularity feature built from the standard log is substantially measuring what the
