@@ -29,17 +29,24 @@ baseline:
 
 llm:
   # Provider swappable behind agent/llm.py, the single call site.
-  model: claude-sonnet-5    # ~60% cheaper than claude-opus-5 ($2/$10 vs $5/$25 per MTok).
-                            # Same API surface: adaptive thinking (pass NO `thinking` block)
-                            # and NEVER temperature/top_p/top_k — sampling params are removed
-                            # on both models and return HTTP 400.
-                            # Swap back to claude-opus-5 if hypothesis quality disappoints;
-                            # that reasoning is the 20% Innovation score.
+  #   anthropic -> model is a Claude model id; creds from ANTHROPIC_API_KEY
+  #   azure     -> model is your Azure DEPLOYMENT NAME (not a model id);
+  #                creds from AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_API_KEY
+  provider: anthropic
+  model: claude-sonnet-5    # $2/$10 per MTok. Development default.
+                            # For the FINAL submission run, consider claude-opus-5
+                            # ($5/$25): hypothesis quality is the 20% Innovation score,
+                            # and one good run costs ~$6 rather than ~$2.50.
+                            # Claude 5 models reject temperature/top_p/top_k with a 400
+                            # and use `effort` instead.
   max_output_tokens: 16000  # NOT a lowball: adaptive thinking spends OUTPUT tokens, so
                             # 8192 truncated generated code mid-block. 16000 is the
                             # recommended non-streaming default (stays under HTTP timeouts).
   max_retries: 3
-  effort: high              # DEFAULT effort; each call site overrides it:
+  temperature: 0.7          # AZURE/OpenAI only — ignored on Anthropic (which rejects it).
+                            # Some diversity stops a smaller model proposing the same
+                            # hypothesis every iteration.
+  effort: high              # ANTHROPIC only — ignored on Azure. Each call site overrides:
                             #   policy  -> high    (hypothesis quality IS Innovation, 20%)
                             #   codegen -> medium  (mechanical once the hypothesis is fixed)
                             # low|medium|high|xhigh|max. Thinking tokens count toward the

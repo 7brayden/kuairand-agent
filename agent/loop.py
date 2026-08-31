@@ -64,14 +64,17 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return yaml.safe_load(Path(path).read_text(encoding="utf-8"))
 
 
-def _has_credentials() -> bool:
-    """True if the Anthropic SDK will find credentials.
+def _has_credentials(provider: str = "anthropic") -> bool:
+    """True if the configured provider will find credentials.
 
     An unset ANTHROPIC_API_KEY does NOT mean there are none: the SDK resolves
     ANTHROPIC_API_KEY -> ANTHROPIC_AUTH_TOKEN -> an `ant auth login` profile on disk.
     Checking only the env var would refuse to start for a user authenticated via the CLI.
     """
     import os
+    if provider == "azure":
+        return bool(os.environ.get("AZURE_OPENAI_ENDPOINT")
+                    and os.environ.get("AZURE_OPENAI_API_KEY"))
     if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
         return True
     return (Path.home() / ".config/anthropic").exists()
@@ -137,11 +140,13 @@ class AgentRun:
         self.max_iterations = max_iterations
 
         self.client = LLMClient(
+            provider=agent_cfg["llm"].get("provider", "anthropic"),
             model=agent_cfg["llm"]["model"],
             prompts_dir=self.root / self.paths["prompts"],
             max_output_tokens=agent_cfg["llm"]["max_output_tokens"],
             max_retries=agent_cfg["llm"].get("max_retries", 3),
             effort=agent_cfg["llm"].get("effort"),
+            temperature=agent_cfg["llm"].get("temperature", 1.0),
         )
         self.policy = policy_mod.build(agent_cfg["policy"], self.client)
         self.generator: codegen.CodeGenerator = (
@@ -302,11 +307,16 @@ class AgentRun:
         print(f"workspace: {'seeded from template' if seeded else 'resumed'} "
               f"at {self.workspace.path}")
 
-        if self.cfg["policy"].get("kind") == "llm" and not _has_credentials():
+        provider = self.cfg["llm"].get("provider", "anthropic")
+        if self.cfg["policy"].get("kind") == "llm" and not _has_credentials(provider):
+            hint = ("  export AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com/\n"
+                    "  export AZURE_OPENAI_API_KEY=<key>"
+                    if provider == "azure" else
+                    "  export ANTHROPIC_API_KEY=sk-ant-...   (console.anthropic.com)\n"
+                    "  or run: ant auth login                 (stores a profile the SDK reads)")
             raise RuntimeError(
-                "policy.kind is 'llm' but no Anthropic credentials were found.\n"
-                "  export ANTHROPIC_API_KEY=sk-ant-...   (console.anthropic.com)\n"
-                "  or run: ant auth login                 (stores a profile the SDK reads)\n"
+                f"policy.kind is 'llm' but no credentials found for provider "
+                f"'{provider}'.\n{hint}\n"
                 "  or run the harness proof with --policy random (no provider needed).")
 
         check = scorer.self_check(self.data_dir)
