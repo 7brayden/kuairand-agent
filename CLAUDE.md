@@ -155,6 +155,22 @@ bump `SCHEMA_VERSION`, keep readers backward-compatible.
 - Checkpoints under `checkpoints/<node_id>/` (gitignored), referenced from the journal — never
   committed into the workspace repo.
 
+## Code generation: edit first, rewrite only on a change of approach
+
+`agent/codegen.py` accepts two response shapes. Search/replace blocks (preferred) apply a
+surgical edit to the agent-owned zone; a fenced python block replaces the zone wholesale.
+The model chooses, and the choice is journaled as `config.mode` / `config.edits`.
+
+This exists because of a measured failure: across four runs the agent could only replace
+its entire program, so every refinement retyped working code from memory under time
+pressure. Listwise-softmax, multi-task heads, and sequence features were each built once,
+badly, scored worse than the tip, and discarded — while ε/N=3 meant only three such
+attempts were available after the best node. Editing lets an idea survive long enough to
+be tuned rather than merely attempted.
+
+A SEARCH that matches zero places is rejected; so is one matching more than one place —
+silently editing the wrong duplicate produces code that runs and is subtly wrong.
+
 ## Build order — harness before intelligence
 
 1. **DONE**: loop runs end to end with `RandomPolicy` (`--policy random`, no provider),

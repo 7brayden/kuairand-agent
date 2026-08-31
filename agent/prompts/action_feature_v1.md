@@ -6,3 +6,5 @@ move the score. Static demographic buckets have already been measured as worthle
 
 Features must be computed without leakage: statistics used to score a `target` row may
 come from `train` only, never from `target`'s own labels.
+
+You are adding to a working pipeline: answer with search/replace blocks so the rest of the model stays exactly as it was.

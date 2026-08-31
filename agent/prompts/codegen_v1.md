@@ -19,10 +19,38 @@ unattended, with no human review.
 {current_zone}
 ```
 
+## Two ways to answer — pick the right one
+
+**Prefer editing.** If the current code already works, change only the lines you need,
+using search/replace blocks:
+
+```
+<<<<<<< SEARCH
+    lr = 0.001
+    epochs = 40
+=======
+    lr = 0.003
+    epochs = 60
+>>>>>>> REPLACE
+```
+
+You may send several blocks in one reply. Each SEARCH must be copied **verbatim** from
+the current code — exact text, exact indentation — and must match **exactly one** place;
+include a surrounding line or two if it would otherwise be ambiguous.
+
+**Rewrite only when the approach itself changes** — a different model family, or when the
+current code is still the empty stub. Then send one fenced python block containing the
+whole zone, as described below.
+
+Why this matters: a rewrite means retyping a working program from memory under time
+pressure, and it usually comes out worse than what you already had. Several good ideas
+have been lost that way — built once, badly, and discarded. If your hypothesis is "tune
+this", "add this feature", or "fix this bug", **edit**.
+
 ## Hard requirements
 
-1. Output **one fenced python block** and nothing else that matters. Prose outside the
-   fence is ignored.
+1. Output either search/replace blocks OR **one fenced python block**, not both. Prose
+   outside them is ignored.
 2. The block replaces the agent-owned zone. It **must** define
    `fit_predict(train, valid, target, checkpoint_dir)` returning a numpy array of exactly
    `len(target)` finite floats, in `target`'s existing row order.

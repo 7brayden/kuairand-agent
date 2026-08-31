@@ -289,3 +289,62 @@ def test_codegen_prompt_demands_training_diagnostics() -> None:
     prompt = client.prompts_seen[0]
     assert "Print your training diagnostics" in prompt
     assert "max_epochs=40" in prompt      # the measured training budget from eval/official/
+
+
+# ------------------- generator chooses edit vs rewrite (end to end) -------------------
+
+EDIT_RESPONSE = """I'll tune the learning rate only.
+
+<<<<<<< SEARCH
+    rate = train.groupby("video_id")["long_view"].mean()
+=======
+    rate = train.groupby("video_id")["long_view"].mean() * 1.0
+>>>>>>> REPLACE
+"""
+
+WORKING_ZONE = '''def fit_predict(train, valid, target, checkpoint_dir):
+    """Item popularity."""
+    import numpy as np
+    rate = train.groupby("video_id")["long_view"].mean()
+    return target["video_id"].map(rate).fillna(0.0).to_numpy(dtype=float)
+'''
+
+
+def _source_with(zone: str) -> str:
+    from agent.codegen import replace_agent_zone
+    return replace_agent_zone(TEMPLATE, zone)
+
+
+def test_generator_applies_an_edit_without_touching_the_rest() -> None:
+    client = FakeClient([EDIT_RESPONSE])
+    out = LLMCodeGenerator(client).generate(
+        ActionProposal("tune", "raise the smoothing"), _source_with(WORKING_ZONE), {})
+    assert out.config["mode"] == "edit" and out.config["edits"] == 1
+    assert '* 1.0' in out.source
+    assert '"""Item popularity."""' in out.source     # surrounding code preserved verbatim
+    assert "def write_predictions(" in out.source     # I/O contract still intact
+
+
+def test_generator_still_accepts_a_full_rewrite() -> None:
+    out = LLMCodeGenerator(FakeClient([GOOD_ZONE])).generate(
+        ActionProposal("model", "new approach"), TEMPLATE, {})
+    assert out.config["mode"] == "rewrite" and out.config["edits"] == 0
+
+
+def test_a_bad_edit_is_repaired_with_the_specific_reason() -> None:
+    bad = "<<<<<<< SEARCH\n    nonexistent = 1\n=======\n    x = 2\n>>>>>>> REPLACE"
+    client = FakeClient([bad, EDIT_RESPONSE])
+    out = LLMCodeGenerator(client).generate(
+        ActionProposal("tune", "h"), _source_with(WORKING_ZONE), {})
+    assert out.config["repairs"] == 1
+    assert "SEARCH block not found" in client.prompts_seen[1]
+
+
+def test_codegen_prompt_teaches_when_to_edit() -> None:
+    client = FakeClient([EDIT_RESPONSE])
+    LLMCodeGenerator(client).generate(
+        ActionProposal("tune", "h"), _source_with(WORKING_ZONE), {})
+    prompt = client.prompts_seen[0]
+    assert "Prefer editing" in prompt
+    assert "SEARCH" in prompt and "REPLACE" in prompt
+    assert "refinement of working code" in prompt      # from action_tune_v1.md

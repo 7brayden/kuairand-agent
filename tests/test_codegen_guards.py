@@ -77,3 +77,48 @@ def test_extract_agent_zone_excludes_the_io_contract() -> None:
     zone = extract_agent_zone(TEMPLATE)
     assert "def fit_predict(" in zone
     assert "def write_predictions(" not in zone and "row_id" not in zone
+
+
+# --------------------------- surgical edits (edit vs rewrite) -------------------------
+# For four runs the agent could only replace its whole program, so every refinement was
+# a rushed rewrite of working code and good ideas were rebuilt badly, then discarded.
+
+from agent.codegen import NoEditBlocks, apply_edit_blocks  # noqa: E402
+
+ZONE = "def fit_predict(train, valid, target, checkpoint_dir):\n    k = 16\n    lr = 0.001\n    return k, lr\n"
+
+
+def test_single_edit_applies() -> None:
+    new, n = apply_edit_blocks(
+        ZONE, "reasoning\n<<<<<<< SEARCH\n    k = 16\n=======\n    k = 32\n>>>>>>> REPLACE\n")
+    assert n == 1 and "k = 32" in new and "lr = 0.001" in new   # untouched line survives
+
+
+def test_several_edits_apply_in_order() -> None:
+    new, n = apply_edit_blocks(ZONE, (
+        "<<<<<<< SEARCH\n    k = 16\n=======\n    k = 64\n>>>>>>> REPLACE\n"
+        "<<<<<<< SEARCH\n    lr = 0.001\n=======\n    lr = 0.01\n>>>>>>> REPLACE\n"))
+    assert n == 2 and "k = 64" in new and "lr = 0.01" in new
+
+
+def test_a_plain_rewrite_is_signalled_not_misparsed() -> None:
+    with pytest.raises(NoEditBlocks):
+        apply_edit_blocks(ZONE, "```python\ndef fit_predict(a,b,c,d): pass\n```")
+
+
+def test_unmatched_search_is_rejected_with_a_usable_message() -> None:
+    with pytest.raises(CodeGenError, match="not found"):
+        apply_edit_blocks(ZONE, "<<<<<<< SEARCH\n    k = 99\n=======\n    k = 1\n>>>>>>> REPLACE")
+
+
+def test_ambiguous_search_is_rejected_rather_than_guessed() -> None:
+    """Editing the wrong one of two identical blocks yields code that runs and is
+    subtly wrong — the worst failure mode available here."""
+    dup = "def f():\n    x = 1\n    y = 2\n    x = 1\n"
+    with pytest.raises(CodeGenError, match="matches 2 places"):
+        apply_edit_blocks(dup, "<<<<<<< SEARCH\n    x = 1\n=======\n    x = 5\n>>>>>>> REPLACE")
+
+
+def test_empty_search_is_rejected() -> None:
+    with pytest.raises(CodeGenError, match="empty SEARCH"):
+        apply_edit_blocks(ZONE, "<<<<<<< SEARCH\n\n=======\n    k = 5\n>>>>>>> REPLACE")

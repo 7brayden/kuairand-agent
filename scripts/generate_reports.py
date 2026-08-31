@@ -58,12 +58,15 @@ def results_table(entries: list[JournalEntry], cfg: dict) -> str:
         f"Headroom used: {(best.val_primary - base['primary']) / (ceil - base['primary']) * 100:+.1f}%"
         f" of the {ceil - base['primary']:.4f} available above baseline.\n",
         "\n## Every iteration\n",
-        "| it | node | action | GAUC | nDCG@5 | primary | accepted | errors |",
-        "|---|---|---|---|---|---|---|---|",
+        "| it | node | action | mode | GAUC | nDCG@5 | primary | accepted | errors |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for e in entries:
         errs = ", ".join(x.error_type for x in e.error_events) or "—"
-        out.append(f"| {e.iteration} | `{e.node_id}` | {e.action_type} | "
+        mode = e.config.get("mode", "—")
+        if mode == "edit":
+            mode = f"edit×{e.config.get('edits', '?')}"
+        out.append(f"| {e.iteration} | `{e.node_id}` | {e.action_type} | {mode} | "
                    f"{_fmt(e.val_gauc)} | {_fmt(e.val_ndcg5)} | {_fmt(e.val_primary)} | "
                    f"{'yes' if e.accepted else 'no'} | {errs} |")
     final = ROOT / "reports" / "final_result.json"

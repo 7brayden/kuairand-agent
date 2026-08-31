@@ -34,6 +34,54 @@ class CodeGenError(RuntimeError):
     """Generated code violated a contract before it was ever executed."""
 
 
+class NoEditBlocks(Exception):
+    """The response contained no SEARCH/REPLACE blocks — treat it as a full rewrite."""
+
+
+#: A surgical edit, in the search/replace form LLMs handle most reliably.
+#: Unified diffs need exact line numbers and hunk headers, which models get wrong often
+#: enough to cost iterations; an exact-string match either applies or fails loudly.
+EDIT_BLOCK_RE = re.compile(
+    r"<{5,}\s*SEARCH\s*\n(.*?)\n?={5,}\s*\n(.*?)\n?>{5,}\s*REPLACE",
+    re.DOTALL)
+
+
+def apply_edit_blocks(zone: str, text: str) -> tuple[str, int]:
+    """Apply SEARCH/REPLACE blocks to the agent-owned zone.
+
+    Why this exists: for four runs the agent could only replace its entire program, so
+    every refinement was a rushed from-scratch rewrite of working code. Good ideas
+    (listwise loss, multi-task heads) never got tuned — they got rebuilt badly once and
+    discarded. Editing lets an idea survive long enough to be worth judging.
+
+    Each SEARCH must match EXACTLY ONCE in the zone. Ambiguity is rejected rather than
+    guessed at: silently editing the wrong one of two identical blocks produces code that
+    runs and is subtly wrong, which is the worst possible failure here.
+
+    Returns (new_zone, number_of_edits). Raises NoEditBlocks if this is a rewrite.
+    """
+    blocks = EDIT_BLOCK_RE.findall(text)
+    if not blocks:
+        raise NoEditBlocks()
+
+    out = zone
+    for i, (search, replace) in enumerate(blocks, 1):
+        if not search.strip():
+            raise CodeGenError(f"edit {i}: empty SEARCH block")
+        found = out.count(search)
+        if found == 0:
+            preview = " / ".join(search.strip().splitlines()[:2])[:160]
+            raise CodeGenError(
+                f"edit {i}: SEARCH block not found in the current code — it must be "
+                f"copied verbatim, including indentation. Looked for: {preview!r}")
+        if found > 1:
+            raise CodeGenError(
+                f"edit {i}: SEARCH block matches {found} places; it must be unique. "
+                f"Include surrounding lines to disambiguate.")
+        out = out.replace(search, replace, 1)
+    return out, len(blocks)
+
+
 # --------------------------------- guards -------------------------------------------
 
 #: Patterns that indicate generated code is reaching for the held-out test split.
@@ -211,6 +259,7 @@ class LLMCodeGenerator:
             "extra_context": context.get("extra_context", ""),
         }
 
+        current_zone = variables["current_zone"]
         problems: list[str] = []
         for attempt in range(self.max_repairs + 1):
             if problems:  # repair round: tell it exactly what the guard rejected
@@ -218,14 +267,26 @@ class LLMCodeGenerator:
                     f"{context.get('extra_context', '')}\n\n"
                     f"## Your previous attempt was REJECTED before execution\n\n"
                     + "\n".join(f"- {p}" for p in problems)
-                    + "\n\nReturn a corrected block that fixes exactly these problems.")
+                    + "\n\nReturn a corrected response that fixes exactly these problems.")
             response = self.client.complete(self.prompt_name, variables,
                                             effort=self.effort)
+
+            # Prefer a surgical edit; fall back to a full rewrite. Which one arrived is
+            # the model's choice, and is journaled so we can see whether editing helps.
+            mode, edits = "edit", 0
             try:
-                zone = extract_code_block(response.text)
-            except LLMError as exc:
+                zone, edits = apply_edit_blocks(current_zone, response.text)
+            except NoEditBlocks:
+                mode = "rewrite"
+                try:
+                    zone = extract_code_block(response.text)
+                except LLMError as exc:
+                    problems = [f"{exc} (and no SEARCH/REPLACE blocks either)"]
+                    continue
+            except CodeGenError as exc:
                 problems = [str(exc)]
                 continue
+
             candidate = replace_agent_zone(current_source, zone)
             problems = lint_generated_code(candidate)
             if not problems:
@@ -234,7 +295,7 @@ class LLMCodeGenerator:
                     summary=_summarise(proposal.hypothesis),
                     config={"generator": "llm", "action": proposal.action_type,
                             "model": self.client.model, "prompt": self.prompt_name,
-                            "repairs": attempt},
+                            "repairs": attempt, "mode": mode, "edits": edits},
                 )
         raise CodeGenError("generated code failed the guards after "
                            f"{self.max_repairs + 1} attempts: {'; '.join(problems)}")
