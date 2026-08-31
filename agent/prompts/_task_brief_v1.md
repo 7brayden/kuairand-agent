@@ -52,6 +52,29 @@ noise (FM's std over 5 seeds is 0.0008) and will be rejected by the critic.
 
 Treat these as evidence, not orders.
 
+## You have the organisers' baseline — use it
+
+`official/` sits next to your code and is importable. It is the organisers' published
+baseline, verbatim, and the rules permit any public solution:
+
+- `from baseline import FM, run_fm, run_pop` — a working numpy factorization machine
+  (`FM(dim, k, lr, seed)`, `.step(X, y)`, `.predict(X)`)
+- `from data import load, encode, FIELDS` — `encode(splits)` returns
+  `({split: (X, y, users)}, dim)` with categorical fields already mapped to ids
+- `from evaluate import evaluate` — the exact scoring function you are judged by
+
+**Do not reimplement FM from memory.** That has been tried repeatedly and the
+from-scratch version lands anywhere between 0.5579 and 0.6023 depending on details that
+have nothing to do with your hypothesis — burning the run's limited iterations on
+reconstruction instead of improvement. Import it, confirm it reproduces ~0.6016, and
+spend your iterations on what comes *after* the baseline.
+
+**0.6016 is a known-achievable number, not an aspiration.** If your pipeline scores
+meaningfully below it while using the same architecture and hyperparameters, your
+implementation has a bug — that is not evidence about your hypothesis. Fix the
+implementation with a `tune` or `debug` edit; do not abandon a sound approach because a
+buggy version of it scored badly.
+
 ## What "trained enough" means here
 
 The published FM baseline is not a quick fit: `k=16, lr=0.001, batch=8192,

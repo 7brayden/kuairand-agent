@@ -24,9 +24,16 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 
 import numpy as np
 import pandas as pd
+
+# The organisers' published baseline ships alongside this file, in official/. The rules
+# permit any public solution, so the agent may import and adapt it rather than
+# reimplementing a factorization machine from memory. Its modules import each other by
+# bare name, so their directory goes on the path.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "official"))
 
 # ----------------------------- CONTRACT (do not change) -----------------------------
 

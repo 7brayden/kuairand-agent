@@ -16,6 +16,11 @@ is the I/O contract, because two things are load-bearing and expensive to redisc
 
 Both are contract, not modelling, so they are given rather than discovered.
 
+`official/` holds the organisers' published baseline, copied verbatim from
+`eval/official/`. The agent may import and adapt it — the rules permit any public
+solution, and reimplementing a factorization machine from memory was measurably costing
+runs. `fit_predict` is still empty: the agent decides what to do with the baseline.
+
 ## Contract
 
     python3 main.py --data-dir <raw csv dir> --split valid --out-dir <dir>

@@ -394,3 +394,31 @@ def test_policy_prompt_routes_overfitting_to_tune() -> None:
     client = FakeClient(['```json\n{"action":"tune","hypothesis":"h"}\n```'])
     LLMPolicy(client, ["model", "tune"]).propose(RunState(), [])
     assert "diagnosis is overfitting" in client.prompts_seen[0]
+
+
+# ------------- the organisers' baseline is reachable from generated code --------------
+# Reimplementing FM from memory scored anywhere from 0.5579 to 0.6023 across runs, which
+# spent limited iterations on reconstruction rather than improvement. The rules permit
+# any public solution, so the published baseline ships inside the workspace.
+
+def test_official_baseline_ships_in_the_template() -> None:
+    root = Path(__file__).resolve().parent.parent
+    for name in ("baseline.py", "data.py", "evaluate.py"):
+        assert (root / "pipeline/template/official" / name).exists(), name
+
+
+def test_vendored_copy_is_byte_identical_to_eval_official() -> None:
+    """It must stay the organisers' code, not a fork that drifts."""
+    root = Path(__file__).resolve().parent.parent
+    for name in ("baseline.py", "data.py", "evaluate.py"):
+        assert (root / "pipeline/template/official" / name).read_bytes() == \
+               (root / "eval/official" / name).read_bytes(), name
+
+
+def test_the_agent_is_told_the_baseline_is_importable_and_achievable() -> None:
+    client = FakeClient([GOOD_ZONE])
+    LLMCodeGenerator(client).generate(ActionProposal("model", "h"), TEMPLATE, {})
+    prompt = client.prompts_seen[0]
+    assert "from baseline import FM" in prompt
+    assert "known-achievable" in prompt          # 0.6016 is a floor, not an aspiration
+    assert "Do not reimplement FM from memory" in prompt
