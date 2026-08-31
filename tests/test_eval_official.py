@@ -96,3 +96,19 @@ def test_unbiased_log_never_reaches_the_test_window() -> None:
         "unbiased frame leaks into the test window"
     assert u["long_view"].mean() < 0.15, \
         "random exposure should convert far below the recommender's own 0.31"
+
+
+@needs_data
+def test_unbiased_frame_has_the_same_columns_as_train() -> None:
+    """The prompt promises `unbiased` has the same columns as `train`, and item-side
+    features are the entire reason it exists. A missing author_id would make the first
+    natural use of it raise — the same class of bug that already cost two iterations."""
+    import sys
+    sys.path.insert(0, str(ROOT / "pipeline/template"))
+    import main as template
+
+    train = template.split_of(template.load_logs(str(DATA_DIR)), "train")
+    unbiased = template.load_unbiased(str(DATA_DIR))
+    missing = set(train.columns) - set(unbiased.columns)
+    assert not missing, f"unbiased frame is missing columns train has: {sorted(missing)}"
+    assert unbiased["author_id"].notna().all()

@@ -87,7 +87,12 @@ def load_unbiased(data_dir: str) -> pd.DataFrame:
     """
     lo, hi = RANDOM_LOG_WINDOW
     df = pd.read_csv(os.path.join(data_dir, RANDOM_LOG), dtype={"user_id": str, "video_id": str})
-    return df[(df["date"] >= lo) & (df["date"] <= hi)].reset_index(drop=True)
+    df = df[(df["date"] >= lo) & (df["date"] <= hi)].reset_index(drop=True)
+    # Join the same item attributes as load_logs. Without this the frame silently lacks
+    # author_id, tag, video_duration and friends — and item-side features are the entire
+    # reason this frame exists, so the first thing anyone reaches for would raise.
+    vf = pd.read_csv(os.path.join(data_dir, VIDEO_FEATURES), dtype={"video_id": str})
+    return df.merge(vf, on="video_id", how="left")
 
 
 def split_of(df: pd.DataFrame, name: str) -> pd.DataFrame:

@@ -63,7 +63,12 @@ policy:
   actions: [eda, feature, model, tune, debug]
 
 executor:
-  timeout_seconds: 1800     # hard subprocess timeout for generated pipeline code
+  timeout_seconds: 600      # hard subprocess timeout for generated pipeline code.
+                            # Sized from measurement: across 48 scored iterations the
+                            # whole iteration (LLM + pipeline + eval) ran median 85s,
+                            # p90 224s, max 392s — and the pipeline is only part of that.
+                            # 600s leaves generous headroom for legitimate training while
+                            # bounding a runaway to 10 minutes instead of 30.
   python: null              # null = use the same interpreter as the harness (sys.executable).
                             # Set explicitly only to run the pipeline in a different env;
                             # a bare "python3" here silently diverges from `uv run`.
