@@ -1,3 +1,0 @@
-dim=41155
-best_epoch=2
-best_valid_primary=0.6027576923370361

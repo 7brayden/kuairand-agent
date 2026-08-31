@@ -19,6 +19,7 @@ data/raw/
 data/processed/
 checkpoints/
 logs/_work/
+logs/_final/
 
 # archived previous runs (the live run's journal stays tracked)
 runs/

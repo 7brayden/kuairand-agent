@@ -191,5 +191,13 @@ and is the only code path allowed to touch the test split.
 ## Contributions
 
 Written for the hackathon track by the repository author, with the agent harness
-implemented in collaboration with Claude Code. The organisers' starter kit
-(`eval/official/`) is vendored unmodified and is not our work.
+implemented in collaboration with Claude Code.
+
+The organisers' starter kit is vendored byte-for-byte and unmodified under
+`eval/official/` (and copied to `pipeline/template/official/` for the agent to import).
+That code is theirs, not ours, and a test asserts it never drifts from the originals.
+
+## License
+
+MIT — see [LICENSE](LICENSE). The vendored organiser code and the KuaiRand-Pure dataset
+are excluded and remain under their own terms.
