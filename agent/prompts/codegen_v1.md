@@ -52,8 +52,12 @@ this", "add this feature", or "fix this bug", **edit**.
 1. Output either search/replace blocks OR **one fenced python block**, not both. Prose
    outside them is ignored.
 2. The block replaces the agent-owned zone. It **must** define
-   `fit_predict(train, valid, target, checkpoint_dir)` returning a numpy array of exactly
-   `len(target)` finite floats, in `target`'s existing row order.
+   `fit_predict(train, valid, target, checkpoint_dir, unbiased)` returning a numpy array
+   of exactly `len(target)` finite floats, in `target`'s existing row order.
+   `unbiased` is ~288k random-exposure impressions from the validation window, same
+   columns as `train`. Per-video rates there measure genuine appeal (they correlate only
+   0.375 with the biased log's). Use it for item-side features; do not train the main
+   objective on it and do not reweight toward it.
    **Use `valid` for early stopping and model selection** — it is the real validation
    split, the same one the published FM baseline tunes against. Do NOT carve your own
    holdout out of `train`: `train` and `valid` are separated in time, so an internal

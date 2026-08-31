@@ -131,7 +131,7 @@ def lint_generated_code(source: str) -> list[str]:
         problems.append("fit_predict() is missing — the harness calls it by name")
     else:
         args = [a.arg for a in fns["fit_predict"].args.args]
-        if args[:4] != ["train", "valid", "target", "checkpoint_dir"]:
+        if args[:5] != ["train", "valid", "target", "checkpoint_dir", "unbiased"]:
             problems.append(f"fit_predict signature changed: {args}")
     for guard in ("load_logs", "split_of", "write_predictions"):
         if guard not in fns:
@@ -193,7 +193,7 @@ STUB_VARIANTS = ("popularity", "random_scores", "broken_syntax", "infinite_loop"
 
 _STUB_BODIES = {
     "popularity": '''
-def fit_predict(train, valid, target, checkpoint_dir):
+def fit_predict(train, valid, target, checkpoint_dir, unbiased):
     """Smoothed item popularity: P(long_view | video), Bayesian-shrunk to the mean."""
     import os
     g = train.groupby("video_id")["long_view"]
@@ -204,19 +204,19 @@ def fit_predict(train, valid, target, checkpoint_dir):
     return target["video_id"].map(rate).fillna(gmean).to_numpy(dtype=float)
 ''',
     "random_scores": '''
-def fit_predict(train, valid, target, checkpoint_dir):
+def fit_predict(train, valid, target, checkpoint_dir, unbiased):
     """Uniform random scores — a deliberate lower bound (primary ~ 0.483)."""
     import numpy as np
     return np.random.default_rng(0).random(len(target))
 ''',
     "broken_syntax": '''
-def fit_predict(train, valid, target, checkpoint_dir):
+def fit_predict(train, valid, target, checkpoint_dir, unbiased):
     """Deliberately malformed: exercises the code_error -> debug recovery path."""
     scores = target["video_id"].map(  # unbalanced paren, fails at import time
     return scores
 ''',
     "infinite_loop": '''
-def fit_predict(train, valid, target, checkpoint_dir):
+def fit_predict(train, valid, target, checkpoint_dir, unbiased):
     """Deliberately non-terminating: exercises the hard-timeout kill path."""
     import time
     while True:

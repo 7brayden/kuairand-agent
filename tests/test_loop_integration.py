@@ -27,7 +27,7 @@ DATA_DIR = ROOT / "data/raw/KuaiRand-Pure/data"
 pytestmark = pytest.mark.skipif(not DATA_DIR.exists(), reason="dataset not downloaded")
 
 POP_ZONE = '''```python
-def fit_predict(train, valid, target, checkpoint_dir):
+def fit_predict(train, valid, target, checkpoint_dir, unbiased):
     """Smoothed item popularity."""
     import numpy as np
     g = train.groupby("video_id")["long_view"].agg(["sum", "count"])
@@ -37,7 +37,7 @@ def fit_predict(train, valid, target, checkpoint_dir):
 ```'''
 
 CONSTANT_ZONE = '''```python
-def fit_predict(train, valid, target, checkpoint_dir):
+def fit_predict(train, valid, target, checkpoint_dir, unbiased):
     """Constant score — within-user ranking makes this exactly as good as random."""
     import numpy as np
     return np.zeros(len(target), dtype=float)

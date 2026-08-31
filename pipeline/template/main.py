@@ -45,6 +45,12 @@ SPLITS = {
 }
 LOG_FILES = ("log_standard_4_08_to_4_21_pure.csv", "log_standard_4_22_to_5_08_pure.csv")
 VIDEO_FEATURES = "video_features_basic_pure.csv"
+RANDOM_LOG = "log_random_4_22_to_5_08_pure.csv"
+
+#: The random-exposure log spans 04-22..05-08, which covers the TEST window. Only its
+#: validation-window portion is ever exposed, so no future label can reach the model —
+#: the restriction is structural rather than a rule the agent is asked to respect.
+RANDOM_LOG_WINDOW = SPLITS["valid"]
 
 
 def load_logs(data_dir: str) -> pd.DataFrame:
@@ -64,6 +70,24 @@ def load_logs(data_dir: str) -> pd.DataFrame:
     logs = pd.concat(frames, ignore_index=True)
     vf = pd.read_csv(os.path.join(data_dir, VIDEO_FEATURES), dtype={"video_id": str})
     return logs.merge(vf, on="video_id", how="left")
+
+
+def load_unbiased(data_dir: str) -> pd.DataFrame:
+    """Random-exposure log, restricted to the validation window.
+
+    These impressions were shown uniformly at random rather than chosen by the
+    recommender, so per-video statistics computed here measure what people actually
+    watch. Popularity measured on the standard log correlates only 0.375 with this
+    (see reports/data_bias_analysis.md), because the standard log largely records what
+    the recommender promoted.
+
+    Use it to build better ITEM-side features. Do not train the main objective on it and
+    do not reweight toward it: scoring ranks within the recommender's own impressions, so
+    biased traffic is the target distribution.
+    """
+    lo, hi = RANDOM_LOG_WINDOW
+    df = pd.read_csv(os.path.join(data_dir, RANDOM_LOG), dtype={"user_id": str, "video_id": str})
+    return df[(df["date"] >= lo) & (df["date"] <= hi)].reset_index(drop=True)
 
 
 def split_of(df: pd.DataFrame, name: str) -> pd.DataFrame:
@@ -96,7 +120,7 @@ def write_predictions(out_dir: str, target: pd.DataFrame, scores: np.ndarray) ->
 # Milestone 0 (harness proof) runs exactly this.
 
 def fit_predict(train: pd.DataFrame, valid: pd.DataFrame, target: pd.DataFrame,
-                checkpoint_dir: str) -> np.ndarray:
+                checkpoint_dir: str, unbiased: pd.DataFrame) -> np.ndarray:
     """Fit on `train`, return one score per row of `target` (canonical order).
 
     Args:
@@ -106,6 +130,11 @@ def fit_predict(train: pd.DataFrame, valid: pd.DataFrame, target: pd.DataFrame,
             stops after 4 rounds without improvement. Never early-stop on `target`.
         target: the split to score; return exactly len(target) scores.
         checkpoint_dir: write anything needed to reproduce inference here.
+        unbiased: random-exposure impressions from the validation window (~500k rows,
+            same columns as `train`). Shown uniformly at random, so per-video rates here
+            measure genuine appeal rather than what the recommender promoted — the two
+            correlate only 0.375. Useful for item-side features; not for training the
+            main objective, and not for reweighting.
 
     Note during development `target` IS `valid` (same rows) — that is the organisers'
     own methodology, matching how the published baseline is tuned. At final evaluation
@@ -135,9 +164,12 @@ def main() -> None:
     print(f"train={len(train):,d} | valid={len(valid):,d} | "
           f"{args.split}(target)={len(target):,d} rows", flush=True)
 
+    unbiased = load_unbiased(args.data_dir)
+    print(f"unbiased(random exposure, valid window)={len(unbiased):,d} rows", flush=True)
+
     checkpoint_dir = os.path.join(args.out_dir, "checkpoint")
     os.makedirs(checkpoint_dir, exist_ok=True)
-    scores = fit_predict(train, valid, target, checkpoint_dir)
+    scores = fit_predict(train, valid, target, checkpoint_dir, unbiased)
 
     path = write_predictions(args.out_dir, target, scores)
     print(f"wrote {path}", flush=True)

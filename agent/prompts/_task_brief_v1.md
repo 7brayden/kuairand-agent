@@ -17,6 +17,50 @@
   Pure user-side first-order features contribute **exactly zero**. User features only
   matter through crosses with item-side features.
 
+## Measured facts about this data — established, do not re-derive
+
+These come from `reports/data_bias_analysis.md`, measured on train, valid and the
+random-exposure log. Treat them as given; spending an iteration rediscovering any of
+them is an iteration not spent improving.
+
+**1. Almost every evaluated pairing is new.** 98.4% of valid rows and 98.7% of test rows
+are a `(user_id, video_id)` pair that never appears in train. Every evaluated video and
+~97% of users DO appear — it is the *pairing* that is novel.
+
+> Consequence: an explicit `user_id × video_id` cross, or any per-pair lookup, fires on
+> about 1% of evaluation rows and is dead weight. Only **factorised** interactions — a
+> learned user vector dotted with a learned item vector, as in FM — generalise to unseen
+> pairs. A LightGBM categorical `uv_cross` has already been tried and fails for exactly
+> this reason.
+
+**2. Training volume is lopsided in time.** 59% of the 1.14M training rows fall on three
+days (04-10 to 04-12). An average training day carries 81.5k rows; an average evaluation
+day carries 17.8k. A uniformly weighted fit is dominated by one short, high-traffic
+early-April regime and then asked to rank a thinner, later one. Recency weighting or
+inverse-day-frequency weighting of training rows is an untested, well-motivated lever.
+
+**3. Label prevalence shifts once, then holds.** long_view rate is 0.3366 in train,
+0.3133 in valid, 0.3135 in test. The drift is train→evaluation, not valid→test, so valid
+is a well-calibrated proxy for test on this axis.
+
+**4. Exposure is heavily biased, and that bias is the target.** Over the same window the
+recommender's own impressions convert at 0.3134 against 0.0850 for uniformly random
+exposure — a 3.69x lift, impression gini 0.72.
+
+> Your `fit_predict` receives an `unbiased` frame — ~288k of those random-exposure
+> impressions, restricted to the validation window so no test-period label can reach you.
+> Use it to measure item quality cleanly, not to reweight training.
+>
+> **Do not attempt IPS or propensity debiasing.** You are scored on ranking *within the
+> recommender's own impressions*. Biased traffic is the distribution you are being tested
+> on, not a nuisance to correct away; debiasing optimises for an exam you are not sitting.
+
+**5. Popularity measured on biased traffic is a weak proxy for quality.** Per-video
+long_view rate on train correlates only **0.375** with the same rate measured on
+unbiased random exposure (3,398 comparable videos; means 0.304 vs 0.108). An item-
+popularity feature built from the standard log is substantially measuring what the
+recommender promoted rather than what people actually watch.
+
 ## Scoreboard (validation primary)
 
 | | |

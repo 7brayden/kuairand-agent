@@ -79,3 +79,20 @@ def test_columns_the_prompt_promises_actually_exist() -> None:
     actual = set(template.load_logs(str(DATA_DIR)).columns)
     missing = {c for c in promised if c not in actual and "_" in c}
     assert not missing, f"prompt promises columns that do not exist: {sorted(missing)}"
+
+
+@needs_data
+def test_unbiased_log_never_reaches_the_test_window() -> None:
+    """The random-exposure log spans 04-22..05-08, covering the test window. Only its
+    validation-window portion is exposed, so no future label can reach the model. This
+    is enforced structurally rather than left as a rule for the agent to respect."""
+    import sys
+    sys.path.insert(0, str(ROOT / "pipeline/template"))
+    import main as template
+
+    u = template.load_unbiased(str(DATA_DIR))
+    assert len(u) > 0
+    assert u["date"].min() >= 20220422 and u["date"].max() <= 20220428, \
+        "unbiased frame leaks into the test window"
+    assert u["long_view"].mean() < 0.15, \
+        "random exposure should convert far below the recommender's own 0.31"

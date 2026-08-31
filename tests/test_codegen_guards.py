@@ -29,7 +29,7 @@ def test_syntax_error_is_caught_before_execution() -> None:
 
 def test_test_split_access_is_rejected() -> None:
     leak = replace_agent_zone(TEMPLATE, '''
-def fit_predict(train, valid, target, checkpoint_dir):
+def fit_predict(train, valid, target, checkpoint_dir, unbiased):
     extra = split_of(load_logs("d"), "test")
     return extra
 ''')
@@ -51,6 +51,14 @@ def test_dropping_the_valid_arg_is_rejected() -> None:
     sends the agent back to an internal split of train, which is memorisation-inflated."""
     old = replace_agent_zone(
         TEMPLATE, "def fit_predict(train, target, checkpoint_dir):\n    return []\n")
+    assert any("signature" in p for p in lint_generated_code(old))
+
+
+def test_dropping_the_unbiased_arg_is_rejected() -> None:
+    """`unbiased` is the only clean signal about item quality; losing it silently is
+    losing the one thing the standard log cannot tell you."""
+    old = replace_agent_zone(
+        TEMPLATE, "def fit_predict(train, valid, target, checkpoint_dir):\n    return []\n")
     assert any("signature" in p for p in lint_generated_code(old))
 
 
@@ -85,7 +93,7 @@ def test_extract_agent_zone_excludes_the_io_contract() -> None:
 
 from agent.codegen import NoEditBlocks, apply_edit_blocks  # noqa: E402
 
-ZONE = "def fit_predict(train, valid, target, checkpoint_dir):\n    k = 16\n    lr = 0.001\n    return k, lr\n"
+ZONE = "def fit_predict(train, valid, target, checkpoint_dir, unbiased):\n    k = 16\n    lr = 0.001\n    return k, lr\n"
 
 
 def test_single_edit_applies() -> None:
