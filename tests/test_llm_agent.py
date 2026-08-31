@@ -348,3 +348,49 @@ def test_codegen_prompt_teaches_when_to_edit() -> None:
     assert "Prefer editing" in prompt
     assert "SEARCH" in prompt and "REPLACE" in prompt
     assert "refinement of working code" in prompt      # from action_tune_v1.md
+
+
+# ---------------- refinement actions must edit, not rewrite (enforced) ----------------
+# The first live run with editing available chose `rewrite` for all four iterations,
+# including a `feature` step whose prompt explicitly asked for edits. Asking did not
+# work, so the guard rejects a rewrite for refinement actions before execution.
+
+@pytest.mark.parametrize("action", ["tune", "feature", "debug"])
+def test_refinement_actions_may_not_rewrite_working_code(action: str) -> None:
+    from agent.codegen import CodeGenError
+    with pytest.raises(CodeGenError):
+        LLMCodeGenerator(FakeClient([GOOD_ZONE, GOOD_ZONE])).generate(
+            ActionProposal(action, "h"), _source_with(WORKING_ZONE), {})
+
+
+@pytest.mark.parametrize("action", ["tune", "feature", "debug"])
+def test_the_rejection_tells_the_model_what_to_do_instead(action: str) -> None:
+    client = FakeClient([GOOD_ZONE, EDIT_RESPONSE])
+    out = LLMCodeGenerator(client).generate(
+        ActionProposal(action, "h"), _source_with(WORKING_ZONE), {})
+    assert out.config["mode"] == "edit"            # recovered on the repair round
+    assert "SEARCH/REPLACE edits, not a full rewrite" in client.prompts_seen[1]
+
+
+def test_model_actions_may_still_rewrite() -> None:
+    """A genuinely different model family legitimately replaces the program."""
+    out = LLMCodeGenerator(FakeClient([GOOD_ZONE])).generate(
+        ActionProposal("model", "switch to lambdarank"), _source_with(WORKING_ZONE), {})
+    assert out.config["mode"] == "rewrite"
+
+
+def test_refinement_may_rewrite_the_empty_stub() -> None:
+    """On iteration 0 there is nothing to edit, so the guard must not fire."""
+    from agent.codegen import is_stub_zone, extract_agent_zone
+    assert is_stub_zone(extract_agent_zone(TEMPLATE))
+    out = LLMCodeGenerator(FakeClient([GOOD_ZONE])).generate(
+        ActionProposal("tune", "first pipeline"), TEMPLATE, {})
+    assert out.config["mode"] == "rewrite"
+
+
+def test_policy_prompt_routes_overfitting_to_tune() -> None:
+    """it2 diagnosed overfitting from its training log, then answered with an
+    architectural rewrite instead of regularisation."""
+    client = FakeClient(['```json\n{"action":"tune","hypothesis":"h"}\n```'])
+    LLMPolicy(client, ["model", "tune"]).propose(RunState(), [])
+    assert "diagnosis is overfitting" in client.prompts_seen[0]

@@ -24,11 +24,21 @@ of your **reasoning**, not only on the score.
 
 Choose the next action from: **{actions}**.
 
-- `model` — change the model or its objective (the highest-rated untested lever)
-- `feature` — change features fed to the existing model
-- `tune` — hyperparameters only; cheapest, only when structure looks under-tuned
-- `eda` — investigate the data and encode what you learn
-- `debug` — repair the previous failure; choose this if the last iteration errored
+- `model` — a genuinely **different model family or training objective** (FM to
+  lambdarank, pointwise to listwise). This rewrites the program from scratch, which
+  loses whatever tuning the current code has, so it must be justified by more than a
+  hunch. Do not pick it for a change that is really a hyperparameter.
+- `feature` — add or change features fed to the existing model. Applied as an edit.
+- `tune` — hyperparameters and regularisation: learning rate, epochs, embedding size,
+  L2, dropout, early-stopping patience, smoothing priors. Applied as an edit, so it
+  keeps everything that already works. **If your diagnosis is overfitting,
+  underfitting, or "it stopped at the wrong epoch", this is the action** — not `model`.
+- `eda` — investigate the data and encode what you learn.
+- `debug` — repair the previous failure; choose this if the last iteration errored.
+
+`feature`, `tune` and `debug` are applied as surgical edits to the working code, so
+they keep the parts that already work. `model` throws the program away and starts over.
+Prefer the cheaper, safer actions unless the approach itself is what is wrong.
 
 State a **falsifiable** hypothesis: what you expect to change, in which metric, and
 roughly by how much. If your expected effect is under 0.002 it is noise and not worth

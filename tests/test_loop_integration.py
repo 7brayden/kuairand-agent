@@ -91,7 +91,7 @@ def test_accepted_iteration_produces_every_deliverable(tmp_path: Path) -> None:
 def test_rejected_iteration_leaves_no_trace_but_is_journaled(tmp_path: Path) -> None:
     run = _run(tmp_path, [
         '```json\n{"action":"model","hypothesis":"popularity floor"}\n```', POP_ZONE,
-        '```json\n{"action":"tune","hypothesis":"constant scores as a control"}\n```',
+        '```json\n{"action":"model","hypothesis":"constant scores as a control"}\n```',
         CONSTANT_ZONE,
     ])
     state = RunState()

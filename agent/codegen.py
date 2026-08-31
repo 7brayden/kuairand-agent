@@ -38,6 +38,21 @@ class NoEditBlocks(Exception):
     """The response contained no SEARCH/REPLACE blocks — treat it as a full rewrite."""
 
 
+#: Actions that are refinements of working code by definition. For these, a full rewrite
+#: is rejected before execution rather than merely discouraged: the first live run with
+#: editing available chose `rewrite` for all four iterations, including a `feature` step
+#: whose prompt asked for edits. Asking politely did not work; the guard does.
+EDIT_REQUIRED_ACTIONS = frozenset({"tune", "feature", "debug"})
+
+#: Marker for the untouched template body — there is nothing to edit yet.
+_STUB_MARKER = "return np.zeros(len(target)"
+
+
+def is_stub_zone(zone: str) -> bool:
+    """True while the agent-owned zone is still the empty template implementation."""
+    return _STUB_MARKER in zone
+
+
 #: A surgical edit, in the search/replace form LLMs handle most reliably.
 #: Unified diffs need exact line numbers and hunk headers, which models get wrong often
 #: enough to cost iterations; an exact-string match either applies or fails loudly.
@@ -285,6 +300,16 @@ class LLMCodeGenerator:
                     continue
             except CodeGenError as exc:
                 problems = [str(exc)]
+                continue
+
+            if (mode == "rewrite"
+                    and proposal.action_type in EDIT_REQUIRED_ACTIONS
+                    and not is_stub_zone(current_zone)):
+                problems = [
+                    f"`{proposal.action_type}` is a refinement of code that already works, "
+                    f"so it must be expressed as SEARCH/REPLACE edits, not a full rewrite. "
+                    f"Rewriting retypes a working program from memory and reliably comes "
+                    f"out worse. Send only the lines you are changing."]
                 continue
 
             candidate = replace_agent_zone(current_source, zone)
