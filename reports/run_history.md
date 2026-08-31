@@ -22,15 +22,16 @@ The submitted result is a single run, but many were performed while the harness 
 | 20260831T103924Z | 4 | 2 | 2 | 0 | 0 | 98,448 | 0.6024 | +0.0008 |
 | 20260831T103945Z | 6 | 2 | 2 | 2 | 0 | 154,624 | 0.6031 | +0.0015 |
 | 20260831T105220Z | 5 | 3 | 3 | 1 | 0 | 126,126 | 0.6028 | +0.0012 |
+| 20260831T112511Z | 4 | 3 | 2 | 0 | 0 | 135,740 | 0.6022 | +0.0006 |
 | **(submitted)** | 4 | 2 | 2 | 1 | 0 | 106,320 | 0.6033 | +0.0017 |
 
 ## Distribution
 
-- runs: **15**
+- runs: **16**
 - best: **0.6033** (+0.0017 vs baseline)
-- median: 0.6015
-- mean: 0.5977 ± 0.0079
-- runs at or above baseline (0.6016): **7 of 15**
+- median: 0.6018
+- mean: 0.5980 ± 0.0077
+- runs at or above baseline (0.6016): **8 of 16**
 
 Most of the spread comes from harness bugs fixed between runs (truncated code generation, a missing validation split, guessed API signatures, a column the pipeline never joined) rather than from the agent's reasoning, which was consistent throughout. Runs before a given fix are not comparable with runs after it.
 

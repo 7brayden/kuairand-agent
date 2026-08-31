@@ -1,0 +1,478 @@
+<title>KuaiRand Research Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ground:    #F4F6F7;
+    --surface:   #FFFFFF;
+    --sunken:    #EAEEF0;
+    --ink:       #171C22;
+    --ink-soft:  #3D4854;
+    --muted:     #667583;
+    --line:      #D3DBDF;
+    --line-soft: #E4EAED;
+    --accent:    #0E6E7A;
+    --accent-ink:#0A5560;
+    --accent-wash:#E2F0F1;
+    --caveat:    #8A5A0C;
+    --caveat-wash:#F6EEDF;
+    --good:      #2C6E49;
+    --shadow:    0 1px 2px rgba(23,28,34,.05), 0 8px 24px -16px rgba(23,28,34,.18);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:    #0F1318;
+      --surface:   #171C23;
+      --sunken:    #12161C;
+      --ink:       #E6EBEF;
+      --ink-soft:  #BFC9D2;
+      --muted:     #8695A3;
+      --line:      #2B333C;
+      --line-soft: #222932;
+      --accent:    #5FBECB;
+      --accent-ink:#8AD3DD;
+      --accent-wash:#12292E;
+      --caveat:    #D7A44E;
+      --caveat-wash:#2A2216;
+      --good:      #6FBF8E;
+      --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:    #0F1318;
+    --surface:   #171C23;
+    --sunken:    #12161C;
+    --ink:       #E6EBEF;
+    --ink-soft:  #BFC9D2;
+    --muted:     #8695A3;
+    --line:      #2B333C;
+    --line-soft: #222932;
+    --accent:    #5FBECB;
+    --accent-ink:#8AD3DD;
+    --accent-wash:#12292E;
+    --caveat:    #D7A44E;
+    --caveat-wash:#2A2216;
+    --good:      #6FBF8E;
+    --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.6);
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "Source Serif 4", Georgia, serif;
+    font-size: 18px;
+    line-height: 1.62;
+    font-optical-sizing: auto;
+  }
+
+  .wrap {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 0 28px 96px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .col { max-width: 66ch; }
+
+  h1, h2, h3, .display {
+    font-family: "Bricolage Grotesque", "Helvetica Neue", sans-serif;
+    text-wrap: balance;
+    letter-spacing: -0.015em;
+  }
+  h1 { font-size: clamp(2.4rem, 5.5vw, 3.6rem); font-weight: 700; line-height: 1.03; margin: 0 0 .5rem; }
+  h2 {
+    font-size: 1.55rem; font-weight: 700; margin: 0 0 .2rem;
+    line-height: 1.15;
+  }
+  h3 { font-size: 1.06rem; font-weight: 600; margin: 0 0 .35rem; letter-spacing: 0; }
+  p { margin: 0 0 1.05rem; }
+  a { color: var(--accent-ink); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  strong { font-weight: 600; }
+  em { font-style: italic; }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .72rem; font-weight: 500;
+    letter-spacing: .16em; text-transform: uppercase;
+    color: var(--accent-ink);
+    margin: 0 0 .9rem;
+  }
+  .mono, code, td.num, .num { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  code {
+    font-size: .84em; background: var(--sunken);
+    padding: .1em .34em; border-radius: 3px;
+    border: 1px solid var(--line-soft);
+  }
+
+  header {
+    padding: 88px 0 40px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 44px;
+  }
+  header .lede {
+    font-size: 1.22rem; color: var(--ink-soft);
+    max-width: 60ch; margin-top: 1.1rem;
+  }
+
+  section { padding: 44px 0 0; }
+  section + section { border-top: 1px solid var(--line-soft); margin-top: 44px; }
+  .sec-head { margin-bottom: 1.6rem; }
+  .sec-head .kicker {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .7rem; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--muted); display: block; margin-bottom: .5rem;
+  }
+
+  /* headline result — the one bold moment */
+  .verdict {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+    gap: 1px; background: var(--line);
+    border: 1px solid var(--line); border-radius: 6px;
+    overflow: hidden; margin: 0 0 1.6rem;
+    box-shadow: var(--shadow);
+  }
+  .verdict > div { background: var(--surface); padding: 20px 22px; }
+  .verdict .k {
+    font-family: "IBM Plex Mono", monospace; font-size: .68rem;
+    letter-spacing: .13em; text-transform: uppercase; color: var(--muted);
+    display: block; margin-bottom: .5rem;
+  }
+  .verdict .v {
+    font-family: "Bricolage Grotesque", sans-serif; font-weight: 700;
+    font-size: 1.95rem; line-height: 1; font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+  .verdict .v.hero { color: var(--accent); }
+  .verdict .n { font-size: .84rem; color: var(--muted); margin-top: .45rem; display: block; line-height: 1.45; }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    font-family: "IBM Plex Mono", monospace; font-size: .84rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .scroll { overflow-x: auto; margin: 0 0 1.2rem; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+  th, td { padding: 10px 14px; text-align: right; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  thead th {
+    font-size: .68rem; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--muted); font-weight: 500; background: var(--sunken);
+    border-bottom: 1px solid var(--line);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tr.mark td { background: var(--accent-wash); font-weight: 600; }
+  td.pos { color: var(--good); }
+  td.neg { color: var(--caveat); }
+
+  blockquote {
+    margin: 0 0 1.15rem; padding: 2px 0 2px 20px;
+    border-left: 2px solid var(--accent);
+    color: var(--ink-soft); font-style: italic;
+  }
+  blockquote .src {
+    display: block; font-style: normal; font-family: "IBM Plex Mono", monospace;
+    font-size: .72rem; color: var(--muted); margin-top: .5rem; letter-spacing: .02em;
+  }
+
+  .caveat {
+    background: var(--caveat-wash);
+    border: 1px solid color-mix(in srgb, var(--caveat) 32%, transparent);
+    border-radius: 6px; padding: 16px 20px; margin: 0 0 1.2rem;
+  }
+  .caveat p:last-child { margin-bottom: 0; }
+  .caveat .tag {
+    font-family: "IBM Plex Mono", monospace; font-size: .68rem;
+    letter-spacing: .13em; text-transform: uppercase; color: var(--caveat);
+    display: block; margin-bottom: .5rem; font-weight: 600;
+  }
+
+  .loop {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 6px; padding: 20px 22px; margin: 0 0 1.3rem;
+    font-family: "IBM Plex Mono", monospace; font-size: .8rem;
+    line-height: 1.9; overflow-x: auto; color: var(--ink-soft);
+  }
+  .loop b { color: var(--accent-ink); font-weight: 600; }
+  .loop .c { color: var(--muted); }
+
+  ul.plain { list-style: none; padding: 0; margin: 0 0 1.2rem; display: grid; gap: .8rem; }
+  ul.plain li { padding-left: 1.15rem; position: relative; }
+  ul.plain li::before {
+    content: ""; position: absolute; left: 0; top: .62em;
+    width: 5px; height: 5px; background: var(--accent); border-radius: 50%;
+  }
+
+  .stack { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin-bottom: 1.2rem; }
+  .stack > div { background: var(--surface); padding: 14px 18px; display: grid; grid-template-columns: 168px minmax(0,1fr); gap: 16px; align-items: baseline; }
+  .stack .n { font-family: "IBM Plex Mono", monospace; font-size: .78rem; color: var(--accent-ink); font-weight: 500; }
+  .stack .d { font-size: .93rem; color: var(--ink-soft); }
+  @media (max-width: 620px) { .stack > div { grid-template-columns: 1fr; gap: 4px; } }
+
+  footer {
+    margin-top: 60px; padding-top: 22px; border-top: 1px solid var(--line);
+    font-family: "IBM Plex Mono", monospace; font-size: .74rem; color: var(--muted);
+    line-height: 1.8;
+  }
+</style>
+
+<div class="wrap">
+
+<header class="col">
+  <p class="eyebrow">Autonomous ML Research Agent · KuaiRand-Pure</p>
+  <h1>An agent that writes its own recommender</h1>
+  <p class="lede">Given a dataset and two metrics, it explores, writes code, trains, evaluates, reads its own
+  training logs, diagnoses what went wrong, and tries again — with nobody watching. The submitted artifact is
+  the <em>agent</em>. The model is just what it happened to produce.</p>
+</header>
+
+<section>
+  <div class="sec-head col">
+    <span class="kicker">The result, stated honestly</span>
+    <h2>The harness works. The model ties the baseline.</h2>
+  </div>
+
+  <div class="verdict">
+    <div>
+      <span class="k">Hidden test · primary</span>
+      <span class="v hero">+0.00034</span>
+      <span class="n">0.59494 vs the FM baseline's 0.59460. Inside the baseline's own seed noise of 0.0008 — a tie, not a win.</span>
+    </div>
+    <div>
+      <span class="k">Manual interventions</span>
+      <span class="v">1</span>
+      <span class="n">Across 73 iterations in 16 runs. Zero occurred inside a run; the one logged was environment setup.</span>
+    </div>
+    <div>
+      <span class="k">Failures recovered</span>
+      <span class="v">13<span style="color:var(--muted);font-size:1.1rem">/13</span></span>
+      <span class="n">Every crash, timeout and malformed generation was journaled with its recovery. No run ever crashed or stalled out.</span>
+    </div>
+    <div>
+      <span class="k">GPU-hours</span>
+      <span class="v">0.00</span>
+      <span class="n">1.58M tokens and 2.6 wall-hours across every run ever performed. CPU only, by design.</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <p>Two different things happened, and conflating them would misrepresent the work. The <strong>agent</strong>
+    reached baseline quality autonomously from an empty file, recovered from every failure it hit, and produced a
+    genuine finding about the benchmark. The <strong>model</strong> it produced scores level with the organisers'
+    factorization machine — better on nDCG@5, fractionally worse on GAUC, positive overall by an amount too small
+    to claim.</p>
+  </div>
+
+  <div class="scroll col">
+    <table>
+      <thead><tr><th>Hidden test</th><th>Agent</th><th>FM baseline</th><th>Delta</th></tr></thead>
+      <tbody>
+        <tr><td>GAUC</td><td>0.66091</td><td>0.66100</td><td class="neg">−0.00009</td></tr>
+        <tr><td>nDCG@5</td><td>0.52897</td><td>0.52820</td><td class="pos">+0.00077</td></tr>
+        <tr class="mark"><td>primary</td><td>0.59494</td><td>0.59460</td><td class="pos">+0.00034</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="caveat col">
+    <span class="tag">What the number doesn't say</span>
+    <p>Validation-best was 0.6033, a +0.0017 lead. On test that became +0.0003 — roughly 20% transfer. The winning
+    iteration added hour-of-day and recency features, which helped on the seven-day validation window and did not
+    survive the ten-day test window that follows it. Ordinary validation overfitting, and the competition's own
+    selection rule offers no protection against it: the thing you select on is the thing you overfit.</p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head col">
+    <span class="kicker">How it works</span>
+    <h2>One append-only journal, and everything derived from it</h2>
+  </div>
+  <div class="col">
+    <p><code>logs/journal.jsonl</code> is the spine. One entry per attempted iteration, and it serves three roles at
+    once: the judge deliverable, the agent's own memory for its reflect step, and the sole source for every report.
+    Nothing else stores run state. If a number isn't derivable from the journal, it isn't reported.</p>
+  </div>
+
+  <div class="loop col">
+    <b>policy</b>      <span class="c">reflect over the journal → action + falsifiable hypothesis</span><br>
+    <b>codegen</b>     <span class="c">surgical SEARCH/REPLACE edit, or a rewrite if the approach changes</span><br>
+    <b>guards</b>      <span class="c">syntax, I/O contract, test-split leakage — all before execution</span><br>
+    <b>executor</b>    <span class="c">subprocess, hard timeout, never exec()</span><br>
+    <b>eval</b>        <span class="c">the organisers' own scorer, vendored unmodified</span><br>
+    <b>critic</b>      <span class="c">accept → git commit + patch + checkpoint · reject → revert</span><br>
+    <b>journal</b>     <span class="c">append → memory, reports, convergence</span>
+  </div>
+
+  <div class="col">
+    <p>The workspace is its own git repository, so <strong>the commit graph is the search tree</strong>. An accepted
+    iteration is a commit; a rejection is <code>git checkout . &amp;&amp; git clean -fd</code>; backtracking is a
+    branch from an earlier commit. The per-iteration diff deliverable is just
+    <code>git format-patch</code>.</p>
+    <p>Two guards exist to protect us from ourselves rather than from the model. The test split's labels sit in the
+    same local CSVs as validation, so "scored once" is enforced structurally: the loop has no code path to a test
+    score, generated code is linted for test-split references before it runs, and the one-shot evaluation refuses to
+    run twice. Separately, the unbiased random-exposure log spans the test window, so the harness slices it to the
+    validation window <em>before</em> the agent ever sees it.</p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head col">
+    <span class="kicker">Innovation</span>
+    <h2>What the agent worked out on its own</h2>
+  </div>
+  <div class="col">
+    <p>These are unedited hypotheses from the journal. None was prompted; each is the agent reading its own
+    evidence.</p>
+
+    <blockquote>
+      "train_loss keeps falling every epoch while valid_primary peaks at epoch 4 and then degrades for 4 more —
+      classic overfitting of the user_id × video_id embeddings, not underfitting."
+      <span class="src">→ raised L2 from 1e-6 to 1e-4 as a one-line edit. Accepted. This produced most of our gains.</span>
+    </blockquote>
+
+    <blockquote>
+      "hourmin varies row-to-row even within a single user's impression list, so unlike user_id it isn't nulled out
+      by within-user ranking."
+      <span class="src">→ independently derived the structural rule that anything constant within a user contributes exactly zero, then picked a feature that survives it.</span>
+    </blockquote>
+
+    <blockquote>
+      "The previous iteration's code_error came from an implementation bug wiring DataFrames into
+      data.load/encode/FM — not from a flawed idea."
+      <span class="src">→ separated a broken implementation from a wrong hypothesis, and kept the hypothesis.</span>
+    </blockquote>
+
+    <blockquote>
+      "LightGBM categorical splits handle very high-cardinality ids poorly — each leaf isolates a handful of id
+      combinations, unlike FM's learned latent factors."
+      <span class="src">→ diagnosed why its own tree model underperformed a factorization machine, and switched.</span>
+    </blockquote>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head col">
+    <span class="kicker">The finding</span>
+    <h2>Match the metric's k, not the group size</h2>
+  </div>
+  <div class="col">
+    <p>The evaluator groups strictly by user. In the training split a user has a median of 31 impressions; in the
+    evaluation splits, 4 to 5. So any listwise or pairwise ranker trained on whole users learns to order ~31-item
+    lists and is then scored on ~5-item ones. Across fifteen runs, every listwise attempt the agent made —
+    lambdarank, BPR, softmax — lost to a pointwise factorization machine. This is why.</p>
+    <p>A controlled experiment, identical model and features and seeds, varying only how training rows are chunked
+    into groups:</p>
+  </div>
+
+  <div class="scroll col">
+    <table>
+      <thead><tr><th>Training group</th><th>Validation primary</th><th>vs whole-user</th></tr></thead>
+      <tbody>
+        <tr><td>whole user (median 31)</td><td>0.5989</td><td>—</td></tr>
+        <tr><td>chunks of 8</td><td>0.5998</td><td class="pos">+0.0009</td></tr>
+        <tr><td>chunks of 6</td><td>0.5999</td><td class="pos">+0.0010</td></tr>
+        <tr class="mark"><td>chunks of 5</td><td>0.6013</td><td class="pos">+0.0024</td></tr>
+        <tr><td>chunks of 4</td><td>0.6000</td><td class="pos">+0.0011</td></tr>
+        <tr><td>chunks of 2</td><td>0.5957</td><td class="neg">−0.0032</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <p>The peak is <em>sharp</em> at exactly five, reproduced across eight seeds in two independent sets. The
+    mechanism is the metric itself: it is <strong>nDCG@5</strong>. A training list of exactly five sits entirely
+    inside the cutoff, so every position contributes gradient. At six or more, some positions fall outside it; at
+    four, the list is shorter than the cutoff and carries less signal per group. The rule isn't "match the average
+    group size" — it's <strong>match the metric's k</strong>, which predicts a sharp peak rather than a broad
+    optimum, and the neighbours behaving differently is evidence for it rather than noise against it.</p>
+    <p>Honest scope: a chunk-5 lambdarank reaches 0.6013 against FM's 0.6016. It repairs the handicap; it doesn't
+    win on its own. Blending it with a pointwise model reached ~0.603 — the same ceiling the agent had already found
+    by a different route, which is itself evidence the ceiling is real.</p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head col">
+    <span class="kicker">Autonomy &amp; robustness</span>
+    <h2>Every failure, and what happened next</h2>
+  </div>
+  <div class="col">
+    <p>Robustness here is not a low failure count — it's what happens after one. All thirteen error events across
+    all runs were journaled with the recovery taken, and every one recovered. Representative examples:</p>
+  </div>
+
+  <div class="stack col">
+    <div><span class="n">code_error</span><span class="d">Generated code raised. Workspace reverted, a <code>debug</code> iteration scheduled, which restored the accepted node and re-implemented the idea carefully.</span></div>
+    <div><span class="n">timeout</span><span class="d">Pipeline exceeded the hard limit. Whole process group killed, partial stdout captured and fed back so the next attempt knew it had to be cheaper.</span></div>
+    <div><span class="n">bad_llm_output</span><span class="d">Response truncated or unparseable. Named precisely — truncation and refusal both return HTTP 200 and would otherwise look like nonsense downstream.</span></div>
+    <div><span class="n">llm_api_error</span><span class="d">Provider unreachable. Journaled, and the policy returns a labelled <code>FALLBACK</code> proposal so the run continues and the hypothesis is honestly attributed to the harness, not the agent.</span></div>
+  </div>
+
+  <div class="col">
+    <p>Sixteen runs were performed while the harness was debugged, and the best was submitted. Choosing the maximum
+    of several runs is worth more than any single run is expected to score, so <code>reports/run_history.md</code>
+    publishes the whole distribution rather than the number we chose: best 0.6033, median 0.6018, mean 0.5980 ±
+    0.0077, with 8 of 16 runs at or above baseline.</p>
+  </div>
+
+  <div class="caveat col">
+    <span class="tag">Most of that spread was our fault, not the agent's</span>
+    <p>Truncated code generation from a too-small output budget. A missing validation split that left the agent
+    early-stopping on a memorisation-inflated internal holdout reading 0.95 against a true 0.60. API signatures
+    documented by name but not by shape, so it wrote a wrapper that guessed argument order until one stopped
+    throwing. A column the pipeline never joined. Each cost real iterations, and the agent only gets three after its
+    best node. Runs on either side of a fix are not comparable samples of the same system.</p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head col">
+    <span class="kicker">Limitations</span>
+    <h2>What we'd fix given more time</h2>
+  </div>
+  <div class="col">
+    <ul class="plain">
+      <li><strong>The critic is greedy.</strong> Accept-if-best is hill-climbing; it never keeps a neutral change
+      that might unlock something two moves later. Tree search mitigates this — the policy can branch from any
+      accepted commit — but there is no explicit exploration budget.</li>
+      <li><strong>Journal-as-memory compresses crudely.</strong> The last eight iterations render in full and older
+      ones collapse to a row. That holds for tens of iterations, not hundreds, and because the journal <em>is</em>
+      the memory, any lossy scheme changes behaviour.</li>
+      <li><strong><code>gpu_seconds</code> is unmeasured.</strong> Token accounting is airtight — one call site,
+      every call recorded including failures and retries. GPU attribution inside the subprocess is not. It reads
+      zero because the path is genuinely CPU-only, but a torch escalation would need a real meter first.</li>
+      <li><strong>Convergence punishes honesty about failure.</strong> A crash streak counts as no-improvement and
+      can end a run at N=3. Defensible, but a judgement call rather than an organiser rule.</li>
+      <li><strong>The validation→test gap is the binding constraint.</strong> Not our modelling. At ~20% transfer,
+      pushing validation to 0.605 would buy roughly +0.0007 on test. We stopped optimising for that reason rather
+      than from lack of ideas.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head col">
+    <span class="kicker">Built with</span>
+    <h2>Tools, libraries and data</h2>
+  </div>
+  <div class="stack col">
+    <div><span class="n">Claude Sonnet 5</span><span class="d">Anthropic Messages API, adaptive thinking, per-call-site effort — <code>high</code> for hypotheses, <code>medium</code> for code generation. One call site, so every token is accounted.</span></div>
+    <div><span class="n">Python 3.12 · uv</span><span class="d">numpy, pandas, LightGBM, PyYAML, anthropic. Deliberately no LangGraph, CrewAI or AutoGen — everything scored outside the raw delta lives in plumbing that frameworks hide.</span></div>
+    <div><span class="n">KuaiRand-Pure</span><span class="d">1.4M interactions, 27K users × 7.6K items, from Kuaishou. Standard logs plus the 1.19M-row random-exposure log. No external data of any kind.</span></div>
+    <div><span class="n">Organiser starter kit</span><span class="d">Vendored byte-for-byte under <code>eval/official/</code> and checksum-guarded by a test, so the scoring rules cannot drift. The agent may import it — the rules permit any public solution.</span></div>
+    <div><span class="n">git</span><span class="d">The inner workspace repo <em>is</em> the search tree. Not a metaphor: accepted iterations are commits, backtracking is branching.</span></div>
+    <div><span class="n">pytest</span><span class="d">121 tests, including four that run the real loop against real data with only the provider faked, and one asserting the validation-best node is always reproducible.</span></div>
+  </div>
+</section>
+
+<footer class="col">
+  16 runs · 73 iterations · 1 logged intervention · 1,584,277 tokens · 0.00 GPU-hours · 2.6 wall-hours<br>
+  Hidden test evaluated exactly once, from validation-best node <span class="mono">6a261631</span>, commit <span class="mono">913327b7</span>.
+</footer>
+
+</div>

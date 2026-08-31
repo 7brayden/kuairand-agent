@@ -50,8 +50,42 @@ every report. The workspace commit graph **is** the search tree.
 | submission adapter, one-shot final eval | implemented |
 | report generation (md + static HTML) | implemented |
 | **milestone 0 — harness proof** | **passing** (see below) |
-| **milestone 1 — LLM policy + code generation** | **implemented + tested** (fake provider) |
-| live run against a real provider | needs `ANTHROPIC_API_KEY` |
+| **milestone 1 — LLM policy + code generation** | **implemented + tested** |
+| **live runs** | **16 runs, 73 iterations, 1 logged intervention** |
+| **hidden test** | **scored once: primary 0.59494, delta +0.00034** |
+| Devpost writeup | `reports/devpost.html` |
+
+### Result
+
+Hidden test, scored once from validation-best node `6a261631`:
+
+| | agent | FM baseline | delta |
+|---|---|---|---|
+| GAUC | 0.66091 | 0.66100 | −0.00009 |
+| nDCG@5 | 0.52897 | 0.52820 | +0.00077 |
+| **primary** | **0.59494** | 0.59460 | **+0.00034** |
+
+A tie with the baseline — +0.00034 sits inside FM's own seed std of 0.0008. Validation-best
+was 0.6033 (+0.0017); roughly 20% of that transferred, the rest being ordinary validation
+overfitting to the seven-day window.
+
+What the harness did do: reached baseline quality autonomously from an empty file, recovered
+from 13 of 13 failures, ran 16 times with zero in-run interventions and zero GPU-hours, and
+produced one genuine finding about the benchmark (see below). Full distribution across all
+runs is in `reports/run_history.md` — best 0.6033, median 0.6018, mean 0.5980 ± 0.0077,
+8 of 16 at or above baseline.
+
+### Finding: match the metric's k, not the group size
+
+The evaluator groups by user; train has median 31 impressions per user, evaluation 4–5. Every
+listwise attempt across 15 runs lost to a pointwise FM because of it. A controlled experiment
+(`scripts/experiment_group_size.py`, identical model/features/seeds, 8 seeds) found chunking
+training groups to **exactly 5** — the metric's cutoff, nDCG@**5** — worth +0.0024, with a
+sharp peak rather than a broad optimum:
+
+| whole user (31) | 8 | 6 | **5** | 4 | 2 |
+|---|---|---|---|---|---|
+| 0.5989 | 0.5998 | 0.5999 | **0.6013** | 0.6000 | 0.5957 |
 
 ### Milestone 0: harness before intelligence
 
