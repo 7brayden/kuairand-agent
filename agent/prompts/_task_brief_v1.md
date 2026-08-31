@@ -62,11 +62,30 @@ per user. So a ranker trained with `group = user_id` learns to order ~31-43 item
 and is scored on ~5-7 item lists; nDCG@5 is nearly a whole evaluation list but the top
 ~12% of a training one, and both softmax and lambdarank gradients depend on list length.
 
-> This is a strong candidate explanation for why lambdarank, BPR and listwise softmax
-> have each failed to beat a pointwise FM here: aligned in form, mismatched in scale.
-> You cannot change how you are evaluated, but nothing requires training groups to be
-> whole users — chunking each user's training impressions into blocks of ~5-7, or
-> grouping by `(user_id, date)` (median 3), matches the two. **Untested.**
+> **This has now been measured** (`scripts/experiment_group_size.py`, LightGBM
+> lambdarank, identical features/hyperparameters/seeds, only the grouping varied,
+> 8 seeds across two independent sets):
+>
+> | training group | validation primary |
+> |---|---|
+> | whole user (median 31) | 0.5989 |
+> | chunks of 4 | 0.6000 |
+> | **chunks of 5** | **0.6013** |
+> | chunks of 6 | 0.5999 |
+> | chunks of 8 | 0.5998 |
+> | chunks of 2 | 0.5957 |
+>
+> Chunking beats whole-user by ~0.0024, and the peak is sharp at exactly **5** — not a
+> broad optimum. The mechanism is the metric: it is **nDCG@5**, so a training list of
+> exactly 5 sits entirely inside the cutoff and every position contributes gradient. At 6+
+> some positions fall outside it; at 4 the list is shorter than the cutoff and carries
+> less signal. **Match the metric's k, not the average group size.**
+>
+> This explains why lambdarank, BPR and listwise softmax have each lost to a pointwise FM
+> here: aligned in form, mismatched in scale. A chunk-5 lambdarank reaches 0.6013, level
+> with FM's 0.6016 rather than beating it — so it repairs the handicap, and something
+> further is needed to win. Blending a chunk-5 lambdarank with a pointwise model
+> (rank-averaged within user, roughly 0.7/0.3) reached ~0.603 in offline testing.
 >
 > Related: 36-42% of evaluation users are all-positive or all-negative, so they add a
 > constant to nDCG and are dropped from GAUC entirely, against only 7.3% in train.
