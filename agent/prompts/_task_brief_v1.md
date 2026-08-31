@@ -55,13 +55,39 @@ Treat these as evidence, not orders.
 ## You have the organisers' baseline — use it
 
 `official/` sits next to your code and is importable. It is the organisers' published
-baseline, verbatim, and the rules permit any public solution:
+baseline, verbatim, and the rules permit any public solution.
 
-- `from baseline import FM, run_fm, run_pop` — a working numpy factorization machine
-  (`FM(dim, k, lr, seed)`, `.step(X, y)`, `.predict(X)`)
-- `from data import load, encode, FIELDS` — `encode(splits)` returns
-  `({split: (X, y, users)}, dim)` with categorical fields already mapped to ids
-- `from evaluate import evaluate` — the exact scoring function you are judged by
+**These are the exact signatures. Do not guess them, and never write a shim that tries
+several argument orders until one stops throwing — that silently picks a wrong one and
+reports nonsense metrics.** If something still surprises you, `print()` it and read the
+value in the next iteration's log.
+
+```python
+from evaluate import evaluate
+evaluate(user_ids, labels, scores, k=5)
+#   -> {'GAUC': float, 'nDCG@5': float, 'primary': float, 'users': int, 'rows': int}
+#   three EQUAL-LENGTH sequences, one entry per row: the row's user id, its 0/1
+#   long_view label, and your score. 'primary' is the number you are judged on.
+
+from baseline import FM, run_fm, run_pop
+FM(dim, k=16, lr=0.001, l2=1e-06, seed=0)   # dim = total vocab size, from encode()
+FM.step(X, y)      # one minibatch; X int32 (B, n_fields), y float32 (B,) -> loss
+FM.predict(X, bs=200000)                                        # -> scores (N,)
+run_fm(splits, k=16, lr=0.001, epochs=40, bs=8192, patience=4, seed=0, verbose=True)
+run_pop(splits, prior=20.0)
+
+from data import load, encode, FIELDS
+FIELDS   # ['user_id', 'video_id', 'author_id', 'tab', 'dur_bucket']
+load(data_dir)     # -> {split: [(date, user_id, video_id, author_id, tab,
+                   #              duration_ms, label), ...]}
+encode(splits)     # -> ({split: (X, y, users)}, dim); X int32 (N, 5) of offset ids
+```
+
+**Important shape mismatch.** `run_fm`, `run_pop`, `load` and `encode` all operate on
+that dict-of-row-tuples format, NOT on the pandas DataFrames your `fit_predict` is
+handed. Passing a DataFrame into them raises. Either build the tuple format from your
+frames, or use `FM` directly with your own id encoding — `FM` only needs integer id
+arrays and does not care where they came from.
 
 **Do not reimplement FM from memory.** That has been tried repeatedly and the
 from-scratch version lands anywhere between 0.5579 and 0.6023 depending on details that

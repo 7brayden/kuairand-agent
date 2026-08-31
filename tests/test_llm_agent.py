@@ -422,3 +422,33 @@ def test_the_agent_is_told_the_baseline_is_importable_and_achievable() -> None:
     assert "from baseline import FM" in prompt
     assert "known-achievable" in prompt          # 0.6016 is a floor, not an aspiration
     assert "Do not reimplement FM from memory" in prompt
+
+
+# ------------------------------ stall detection ---------------------------------------
+# A live run spent four consecutive `debug` iterations producing byte-identical 0.5763
+# while re-diagnosing the same problem. The loop was healthy; the search had stalled.
+
+def test_identical_scores_are_called_out_as_a_stall() -> None:
+    from agent import memory
+    history = [entry(i, gauc=0.6, ndcg5=0.5526) for i in range(4)]
+    text = memory.summarize_journal(history)
+    assert "You are stuck" in text
+    assert "not reaching the scoring path" in text
+
+
+def test_repeating_one_action_is_called_out() -> None:
+    from agent import memory
+    history = []
+    for i in range(3):
+        e = entry(i, gauc=0.60 + i / 1000, ndcg5=0.50)
+        e.action_type = "debug"
+        history.append(e)
+    assert "all `debug`" in memory.summarize_journal(history)
+
+
+def test_healthy_progress_is_not_flagged() -> None:
+    from agent import memory
+    history = [entry(i, gauc=0.60 + i / 100, ndcg5=0.50) for i in range(4)]
+    for i, e in enumerate(history):
+        e.action_type = ["model", "tune", "feature", "tune"][i]
+    assert "You are stuck" not in memory.summarize_journal(history)

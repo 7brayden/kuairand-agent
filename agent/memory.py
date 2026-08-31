@@ -78,6 +78,10 @@ def summarize_journal(entries: list[JournalEntry],
                      if best else f"{e.val_primary:.4f}")
             lines.append(f"- `{e.action_type}` ({delta}): {_clip(e.hypothesis, 160)}")
 
+    stuck = detect_stall(entries)
+    if stuck:
+        lines += ["", "## ⚠ You are stuck — change something structural", "", stuck, ""]
+
     recent_logs = [e for e in entries[-STDOUT_WINDOW:] if e.stdout_tail]
     if recent_logs:
         lines += ["", "## Pipeline output from recent iterations", "",
@@ -99,6 +103,37 @@ def summarize_journal(entries: list[JournalEntry],
                              f"`{ev.recovery}`: {_clip(ev.message, 200)}")
 
     return "\n".join(head + lines)
+
+
+#: How many identical-scoring or same-action iterations count as a stall.
+STALL_WINDOW = 3
+
+
+def detect_stall(entries: list[JournalEntry]) -> Optional[str]:
+    """Describe a stall, if the recent history shows one.
+
+    Two shapes, both observed live. A run once spent four consecutive `debug`
+    iterations producing byte-identical scores of 0.5763 while the agent re-diagnosed
+    the same problem each time — the loop was healthy, the search was not. Robustness is
+    judged on never stalling, so the condition is named for the policy rather than left
+    for it to notice.
+    """
+    scored = [e for e in entries if e.val_primary is not None]
+    if len(scored) >= STALL_WINDOW:
+        recent = [round(e.val_primary, 4) for e in scored[-STALL_WINDOW:]]
+        if len(set(recent)) == 1:
+            return (f"The last {STALL_WINDOW} scored iterations all produced primary "
+                    f"{recent[0]:.4f} — byte-identical. Your changes are not reaching the "
+                    f"scoring path at all. Stop refining this line; either verify what you "
+                    f"changed is actually executed (print it), or switch approach.")
+
+    if len(entries) >= STALL_WINDOW:
+        actions = [e.action_type for e in entries[-STALL_WINDOW:]]
+        if len(set(actions)) == 1:
+            return (f"The last {STALL_WINDOW} iterations were all `{actions[0]}` and none "
+                    f"was accepted. Repeating the same action is not working — pick a "
+                    f"different one.")
+    return None
 
 
 def summarize_resources(state: RunState, budget_cfg: Optional[dict] = None) -> str:

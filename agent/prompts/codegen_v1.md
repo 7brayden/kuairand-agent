@@ -65,11 +65,15 @@ this", "add this feature", or "fix this bug", **edit**.
    `train` and `target` only.
 5. Put all imports inside the function or at the top of your block. Do not redefine
    `load_logs`, `split_of`, or `write_predictions`.
-   `official/` is already on the path: `from baseline import FM`, `from data import
-   load, encode, FIELDS`, `from evaluate import evaluate` all work. Prefer importing the
-   organisers' FM over writing your own — it is known to reach 0.6016. Note `data.load`
-   takes a data directory and re-reads the CSVs, while you are handed DataFrames, so you
-   will usually want `encode`-style id mapping over your own frames rather than `load`.
+   `official/` is already on the path. Exact signatures — use them as written, never
+   guess and never try-several-until-one-works:
+   `evaluate(user_ids, labels, scores, k=5)`,
+   `FM(dim, k=16, lr=0.001, l2=1e-06, seed=0)` with `.step(X, y)` / `.predict(X)`,
+   `run_fm(splits, k=16, lr=0.001, epochs=40, bs=8192, patience=4, seed=0)`,
+   `load(data_dir)`, `encode(splits)`.
+   `run_fm`/`load`/`encode` want the official dict-of-row-tuples, NOT the DataFrames you
+   are given — they raise on a DataFrame. `FM` itself only needs integer id arrays, so
+   using it directly with your own encoding is usually the simpler path.
 6. Write anything needed to reproduce inference into `checkpoint_dir`.
 7. Prefer vectorised pandas/numpy. The pipeline must finish well inside the timeout.
 8. **Print your training diagnostics.** stdout is captured into the journal and is the

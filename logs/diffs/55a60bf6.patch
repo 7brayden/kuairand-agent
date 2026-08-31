@@ -1,0 +1,165 @@
+From a3372f03391d90654efb64415f257c163c0d42b9 Mon Sep 17 00:00:00 2001
+From: kuairand-agent <agent@kuairand.local>
+Date: Mon, 31 Aug 2026 16:28:15 +0800
+Subject: [PATCH] =?UTF-8?q?debug:=20The=20prior=20iteration=20crashed=20be?=
+ =?UTF-8?q?fore=20producing=20any=20score=20(traceback=20in=20ma=E2=80=A6?=
+ =?UTF-8?q?=20[55a60bf6]?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ main.py | 138 +++++++++++++++++++++++++++++++++++++++++++++-----------
+ 1 file changed, 112 insertions(+), 26 deletions(-)
+
+diff --git a/main.py b/main.py
+index 5bca038..e6369d9 100644
+--- a/main.py
++++ b/main.py
+@@ -83,32 +83,118 @@ def write_predictions(out_dir: str, target: pd.DataFrame, scores: np.ndarray) ->
+ 
+ 
+ # ------------------------------- AGENT-OWNED ZONE -----------------------------------
+-# Everything below is what the agent rewrites. The seed implementation deliberately
+-# contains no ML: it scores every row 0.0, which is a valid-but-worthless submission.
+-# Milestone 0 (harness proof) runs exactly this.
+-
+-def fit_predict(train: pd.DataFrame, valid: pd.DataFrame, target: pd.DataFrame,
+-                checkpoint_dir: str) -> np.ndarray:
+-    """Fit on `train`, return one score per row of `target` (canonical order).
+-
+-    Args:
+-        train: the training split (20220408-0421), all raw log columns.
+-        valid: the validation split (20220422-0428). **Use this for early stopping and
+-            model selection** — the official FM baseline evaluates on it every epoch and
+-            stops after 4 rounds without improvement. Never early-stop on `target`.
+-        target: the split to score; return exactly len(target) scores.
+-        checkpoint_dir: write anything needed to reproduce inference here.
+-
+-    Note during development `target` IS `valid` (same rows) — that is the organisers'
+-    own methodology, matching how the published baseline is tuned. At final evaluation
+-    `target` becomes the held-out test split while `valid` stays the validation split,
+-    so code that selects on `valid` transfers correctly and code that peeks at `target`'s
+-    labels does not.
+-
+-    Returns:
+-        np.ndarray of shape (len(target),), finite floats, relative order only.
+-    """
+-    return np.zeros(len(target), dtype=float)
++import copy
++import numpy as np
++from baseline import FM
++from data import encode
++from evaluate import evaluate
++
++
++def _rows(df):
++    # encode() expects positional row-tuples (matching CSV column order),
++    # not a DataFrame itself -- iterating a DataFrame directly yields column
++    # name strings, which caused the prior IndexError inside encode().
++    return list(df.itertuples(index=False, name=None))
++
++
++def _try_evaluate(users, y_true, y_score):
++    attempts = [
++        (users, y_true, y_score),
++        (y_true, y_score, users),
++        (y_true, y_score),
++    ]
++    last_err = None
++    for args in attempts:
++        try:
++            return evaluate(*args)
++        except Exception as e:
++            last_err = e
++            continue
++    raise last_err
++
++
++def _extract_primary(res):
++    if isinstance(res, dict):
++        if 'primary' in res:
++            return float(res['primary'])
++        vals = [v for v in res.values() if isinstance(v, (int, float))]
++        return float(np.mean(vals)) if vals else float('nan')
++    if isinstance(res, (tuple, list)):
++        vals = [v for v in res if isinstance(v, (int, float))]
++        return float(np.mean(vals)) if vals else float('nan')
++    return float(res)
++
++
++def fit_predict(train, valid, target, checkpoint_dir):
++    splits = {
++        'train': _rows(train),
++        'valid': _rows(valid),
++        'target': _rows(target),
++    }
++    encoded, dim = encode(splits)
++    Xtr, ytr, utr = encoded['train']
++    Xva, yva, uva = encoded['valid']
++    Xte, yte, ute = encoded['target']
++
++    Xtr = np.asarray(Xtr)
++    ytr = np.asarray(ytr, dtype=float)
++    Xva = np.asarray(Xva)
++    yva = np.asarray(yva, dtype=float)
++    Xte = np.asarray(Xte)
++
++    k = 16
++    lr = 0.001
++    batch = 8192
++    max_epochs = 40
++    patience = 4
++    seed = 0
++
++    model = FM(dim, k, lr, seed)
++    rng = np.random.default_rng(seed)
++
++    best_primary = -np.inf
++    best_state = None
++    bad_epochs = 0
++    n = Xtr.shape[0]
++
++    for epoch in range(1, max_epochs + 1):
++        idx = rng.permutation(n)
++        losses = []
++        for start in range(0, n, batch):
++            bidx = idx[start:start + batch]
++            xb = Xtr[bidx]
++            yb = ytr[bidx]
++            loss = model.step(xb, yb)
++            if loss is not None:
++                try:
++                    losses.append(float(loss))
++                except Exception:
++                    pass
++
++        preds_va = model.predict(Xva)
++        res = _try_evaluate(uva, yva, preds_va)
++        primary = _extract_primary(res)
++        train_loss = float(np.mean(losses)) if losses else float('nan')
++        print(f"[fm] epoch={epoch} train_loss={train_loss:.4f} valid_primary={primary:.4f}")
++
++        if primary > best_primary + 1e-6:
++            best_primary = primary
++            best_state = copy.deepcopy(model.__dict__)
++            bad_epochs = 0
++        else:
++            bad_epochs += 1
++            if bad_epochs >= patience:
++                print(f"[fm] early stop at epoch={epoch}, best_primary={best_primary:.4f}")
++                break
++
++    if best_state is not None:
++        model.__dict__.update(best_state)
++        print(f"[fm] restored best epoch, best_primary={best_primary:.4f}")
++
++    preds = model.predict(Xte)
++    preds = np.asarray(preds, dtype=float)
++    assert len(preds) == len(target)
++    return preds
+ 
+ 
+ # --------------------------- END AGENT-OWNED ZONE -----------------------------------
+-- 
+2.39.5 (Apple Git-154)
