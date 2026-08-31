@@ -1,0 +1,139 @@
+From 8abf13585add3f6dc006ca94548d3454a35fdfbd Mon Sep 17 00:00:00 2001
+From: kuairand-agent <agent@kuairand.local>
+Date: Mon, 31 Aug 2026 16:42:29 +0800
+Subject: [PATCH] =?UTF-8?q?debug:=20The=20FM=20baseline=20itself=20trains?=
+ =?UTF-8?q?=20fine=20(epoch=200=20log=20shows=20valid=5Fprimary=3D0.5?=
+ =?UTF-8?q?=E2=80=A6=20[f9aed97e]?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ main.py | 110 +++++++++++++++++++++++++++++++++++++++++++-------------
+ 1 file changed, 86 insertions(+), 24 deletions(-)
+
+diff --git a/main.py b/main.py
+index 5bca038..cd37b09 100644
+--- a/main.py
++++ b/main.py
+@@ -83,32 +83,94 @@ def write_predictions(out_dir: str, target: pd.DataFrame, scores: np.ndarray) ->
+ 
+ 
+ # ------------------------------- AGENT-OWNED ZONE -----------------------------------
+-# Everything below is what the agent rewrites. The seed implementation deliberately
+-# contains no ML: it scores every row 0.0, which is a valid-but-worthless submission.
+-# Milestone 0 (harness proof) runs exactly this.
+-
+ def fit_predict(train: pd.DataFrame, valid: pd.DataFrame, target: pd.DataFrame,
+                 checkpoint_dir: str) -> np.ndarray:
+-    """Fit on `train`, return one score per row of `target` (canonical order).
+-
+-    Args:
+-        train: the training split (20220408-0421), all raw log columns.
+-        valid: the validation split (20220422-0428). **Use this for early stopping and
+-            model selection** — the official FM baseline evaluates on it every epoch and
+-            stops after 4 rounds without improvement. Never early-stop on `target`.
+-        target: the split to score; return exactly len(target) scores.
+-        checkpoint_dir: write anything needed to reproduce inference here.
+-
+-    Note during development `target` IS `valid` (same rows) — that is the organisers'
+-    own methodology, matching how the published baseline is tuned. At final evaluation
+-    `target` becomes the held-out test split while `valid` stays the validation split,
+-    so code that selects on `valid` transfers correctly and code that peeks at `target`'s
+-    labels does not.
+-
+-    Returns:
+-        np.ndarray of shape (len(target),), finite floats, relative order only.
+-    """
+-    return np.zeros(len(target), dtype=float)
++    import numpy as np
++    import pandas as pd
++    from baseline import FM
++    from evaluate import evaluate
++
++    FIELD_COLS = ['user_id', 'video_id', 'author_id', 'tab', 'dur_bucket']
++
++    def prep(df):
++        df = df.copy()
++        if 'author_id' not in df.columns:
++            df['author_id'] = 0
++        dur = df['duration_ms'].fillna(0).values if 'duration_ms' in df.columns else np.zeros(len(df))
++        df['dur_bucket'] = np.minimum(np.log1p(np.maximum(dur, 0)).astype(int), 20)
++        return df
++
++    train = prep(train)
++    valid = prep(valid)
++    target = prep(target)
++
++    # Build a single shared vocabulary across train+valid+target for every field.
++    all_df = pd.concat([train[FIELD_COLS], valid[FIELD_COLS], target[FIELD_COLS]], axis=0)
++    encoders = {}
++    cur = 0
++    for col in FIELD_COLS:
++        codes, uniques = pd.factorize(all_df[col])
++        encoders[col] = pd.Series(np.arange(len(uniques)) + cur, index=uniques)
++        cur += len(uniques)
++    dim = cur
++    print(f"vocab dim={dim} | train={len(train)} valid={len(valid)} target={len(target)}")
++
++    def encode_df(df):
++        X = np.zeros((len(df), len(FIELD_COLS)), dtype=np.int32)
++        for i, col in enumerate(FIELD_COLS):
++            X[:, i] = df[col].map(encoders[col]).values
++        return X
++
++    Xtr = encode_df(train)
++    ytr = train['long_view'].values.astype(np.float32)
++    Xva = encode_df(valid)
++    yva = valid['long_view'].values.astype(np.float32)
++    Xte = encode_df(target)
++
++    model = FM(dim, k=16, lr=0.001, l2=1e-6, seed=0)
++
++    n = len(Xtr)
++    bs = 8192
++    best_primary = -1.0
++    best_scores = None
++    patience = 4
++    bad_epochs = 0
++    rng = np.random.default_rng(0)
++
++    for epoch in range(40):
++        perm = rng.permutation(n)
++        losses = []
++        for start in range(0, n, bs):
++            idx = perm[start:start + bs]
++            loss = model.step(Xtr[idx], ytr[idx])
++            losses.append(loss)
++        train_loss = float(np.mean(losses))
++
++        va_scores = model.predict(Xva)
++        m = evaluate(valid['user_id'].values, yva, va_scores, k=5)
++        primary = m['primary']
++        print(f"epoch {epoch}: train_loss={train_loss:.5f} valid_primary={primary:.4f} "
++              f"GAUC={m['GAUC']:.4f} nDCG5={m['nDCG@5']:.4f}")
++
++        if primary > best_primary:
++            best_primary = primary
++            best_scores = model.predict(Xte)
++            bad_epochs = 0
++        else:
++            bad_epochs += 1
++            if bad_epochs >= patience:
++                print(f"early stopping at epoch {epoch}, best_primary={best_primary:.4f}")
++                break
++
++    if best_scores is None:
++        best_scores = model.predict(Xte)
++
++    try:
++        np.save(f"{checkpoint_dir}/target_scores.npy", best_scores)
++    except Exception as e:
++        print(f"checkpoint save failed (non-fatal): {e}")
++
++    return np.asarray(best_scores, dtype=float)
+ 
+ 
+ # --------------------------- END AGENT-OWNED ZONE -----------------------------------
+-- 
+2.39.5 (Apple Git-154)

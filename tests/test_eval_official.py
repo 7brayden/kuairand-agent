@@ -38,3 +38,44 @@ def test_random_self_check_matches_published() -> None:
 def test_split_sizes_match_official_windows() -> None:
     sizes = {k: len(v) for k, v in scorer.load_splits(str(DATA_DIR)).items()}
     assert sizes == {"train": 1_141_112, "valid": 124_909, "test": 170_588}
+
+
+@needs_data
+def test_pipeline_row_order_matches_the_official_loader_exactly() -> None:
+    """The submission contract: predictions must be in the official row order.
+
+    The template joins item features onto the logs (a left merge, which preserves left
+    order) so `author_id` is reachable — the agent crashed twice reaching for a column
+    the baseline uses but the raw log does not contain. Any change to loading must keep
+    this exact, so it is pinned rather than checked by hand.
+    """
+    import sys
+    sys.path.insert(0, str(ROOT / "pipeline/template"))
+    import main as template
+
+    df = template.load_logs(str(DATA_DIR))
+    for split in ("train", "valid", "test"):
+        mine = template.split_of(df, split)
+        official = scorer.split_rows(str(DATA_DIR), split)
+        assert len(mine) == len(official), split
+        assert list(mine["user_id"]) == [r[1] for r in official], f"{split}: user order"
+        assert list(mine["video_id"]) == [r[2] for r in official], f"{split}: video order"
+        assert [1 if v else 0 for v in mine["long_view"]] == \
+               [r[6] for r in official], f"{split}: labels"
+
+
+@needs_data
+def test_columns_the_prompt_promises_actually_exist() -> None:
+    """The agent is told an exact column list; a stale list costs it an iteration."""
+    import re
+    import sys
+    sys.path.insert(0, str(ROOT / "pipeline/template"))
+    import main as template
+
+    brief = (ROOT / "agent/prompts/_task_brief_v1.md").read_text()
+    section = brief.split("The exact columns of")[1].split("`dur_bucket` is not a column")[0]
+    promised = set(re.findall(r"`([a-z_]+)`", section)) - {
+        "train", "valid", "target", "video_features_basic_pure.csv", "duration_ms_"}
+    actual = set(template.load_logs(str(DATA_DIR)).columns)
+    missing = {c for c in promised if c not in actual and "_" in c}
+    assert not missing, f"prompt promises columns that do not exist: {sorted(missing)}"

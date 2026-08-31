@@ -123,8 +123,20 @@ iteration can tell convergence failure from a wrong idea. A score near 0.50 (ran
 ## Environment
 
 - CPU only. No GPU budget. `numpy`, `pandas`, and `lightgbm` are available; torch is not.
-- Available raw log columns include: `user_id`, `video_id`, `date`, `hourmin`, `tab`,
-  `duration_ms`, `play_time_ms`, `is_click`, `is_like`, `is_follow`, `is_comment`,
-  `is_forward`, `long_view`, plus `is_hate`, `is_profile_enter`, `is_rand`.
+- **The exact columns of `train` / `valid` / `target`.** These are all of them; anything
+  else raises a KeyError, so do not reach for a column that is not on this list:
+
+  From the interaction log —
+  `user_id`, `video_id`, `date`, `hourmin`, `time_ms`, `tab`, `duration_ms`,
+  `play_time_ms`, `profile_stay_time`, `comment_stay_time`, `long_view` (the label),
+  `is_click`, `is_like`, `is_follow`, `is_comment`, `is_forward`, `is_hate`,
+  `is_profile_enter`, `is_rand`.
+
+  Joined from `video_features_basic_pure.csv` (item-side, one row per video) —
+  `author_id`, `video_type`, `upload_dt`, `upload_type`, `visible_status`,
+  `video_duration`, `server_width`, `server_height`, `music_id`, `music_type`, `tag`.
+
+  `user_id` and `video_id` are **strings**, not ints. `dur_bucket` is not a column: the
+  baseline derives it by quantile-bucketing `duration_ms` over the train split.
 - Runtime limit per iteration is a hard timeout — a run that does not finish is a
   wasted iteration and is rejected.

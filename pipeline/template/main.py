@@ -44,18 +44,26 @@ SPLITS = {
     "test": (20220429, 20220508),
 }
 LOG_FILES = ("log_standard_4_08_to_4_21_pure.csv", "log_standard_4_22_to_5_08_pure.csv")
+VIDEO_FEATURES = "video_features_basic_pure.csv"
 
 
 def load_logs(data_dir: str) -> pd.DataFrame:
-    """Load both standard logs in canonical order, ids kept as strings.
+    """Load both standard logs in canonical order, with item attributes joined on.
 
-    ids stay `str` so the submission's user_id/video_id match the official
-    validator byte for byte (it compares raw CSV text, and any float coercion
-    would render 0 as "0.0" and fail alignment).
+    ids stay `str` so the submission's user_id/video_id match the official validator
+    byte for byte (it compares raw CSV text, and any float coercion would render 0 as
+    "0.0" and fail alignment).
+
+    The item-side join mirrors the official loader, which pulls `author_id` from
+    `video_features_basic_pure.csv` — that column is NOT in the log files, and the
+    baseline's five fields include it. A left merge preserves the left frame's row
+    order, which is the submission contract.
     """
     frames = [pd.read_csv(os.path.join(data_dir, f), dtype={"user_id": str, "video_id": str})
               for f in LOG_FILES]
-    return pd.concat(frames, ignore_index=True)
+    logs = pd.concat(frames, ignore_index=True)
+    vf = pd.read_csv(os.path.join(data_dir, VIDEO_FEATURES), dtype={"video_id": str})
+    return logs.merge(vf, on="video_id", how="left")
 
 
 def split_of(df: pd.DataFrame, name: str) -> pd.DataFrame:
